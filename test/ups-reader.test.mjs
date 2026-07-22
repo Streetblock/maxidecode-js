@@ -168,3 +168,56 @@ test("parses the IDAutomation uncompressed UPS golden message", () => {
   assert.deepEqual(result.secondary.unknownFields, []);
   assert.equal(result.compressed, null);
 });
+
+test("recovers the headerless, mispacked Mode 3 message from label 66034", () => {
+  const malformedMessage = [
+    `352 )${RS}${GS}641`,
+    "027",
+    "01",
+    "961Z45369427",
+    "UPSN",
+    "W1622R",
+    "196",
+    "",
+    "1/4",
+    "20",
+    "N",
+    "",
+    "KORSCHENBROICH",
+    "",
+  ].join(GS) + RS + EOT;
+
+  const result = new UpsMaxicodeReader().read(malformedMessage);
+
+  assert.equal(result.recognized, true);
+  assert.equal(result.standardEnvelope, false);
+  assert.equal(result.variant, "headerless-mode3-with-mispacked-primary");
+  assert.equal(result.structuredCarrierMessageVersion, "96");
+  assert.deepEqual(result.primary, {
+    postalCode: "41352",
+    countryCode: "276",
+    serviceClass: null,
+    recovered: true,
+    recovery: "heuristic-mode3-field-boundary-repair",
+    raw: {
+      postalCode: `352 )${RS}`,
+      countryCode: "641",
+      serviceClass: "027",
+    },
+  });
+  assert.equal(result.secondary.trackingNumberEncoded, "1Z45369427");
+  assert.equal(result.secondary.scac, "UPSN");
+  assert.equal(result.secondary.shipperId, "W1622R");
+  assert.equal(result.secondary.trackingNumberReconstructed, null);
+  assert.equal(result.secondary.julianDayOfPickup, "196");
+  assert.equal(result.secondary.shipmentId, null);
+  assert.equal(result.secondary.packageInShipment, "1/4");
+  assert.equal(result.secondary.weightPounds, "20");
+  assert.equal(result.secondary.addressValidation, "N");
+  assert.equal(result.secondary.shipToStreet, null);
+  assert.equal(result.secondary.shipToCity, "KORSCHENBROICH");
+  assert.equal(result.secondary.shipToState, null);
+  assert.deepEqual(result.secondary.unknownFields, []);
+  assert.equal(result.compressed, null);
+  assert.equal(result.warnings.length, 3);
+});

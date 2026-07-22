@@ -29,6 +29,8 @@ export class UpsMaxicodeReader {
     const compressedSegment = segments.find((segment) => segment.startsWith("07"));
 
     if (!routingSegment) {
+      const recovered = this.parseHeaderlessMode3(message);
+      if (recovered) return recovered;
       return {
         recognized: false,
         standardEnvelope: hasStructuredHeader,
@@ -49,6 +51,105 @@ export class UpsMaxicodeReader {
       primary: routing.primary,
       secondary: routing.secondary,
       compressed: compressedSegment ? this.format07Decoder.decode(compressedSegment) : null,
+    };
+  }
+
+  /**
+   * Recovers a producer-specific Mode 3 variant observed on label 66034.
+   *
+   * Its secondary data begins with `01<GS>96...` instead of the mandatory
+   * `[)><RS>01<GS>96...` envelope. The MaxiCode primary fields are also
+   * mispacked across their normal boundaries. This is intentionally strict so
+   * ordinary malformed messages are not silently reinterpreted as UPS data.
+   */
+  parseHeaderlessMode3(message) {
+    const match = /^([\s\S]{6})\x1d(\d{3})\x1d(\d{3})\x1d(01\x1d[\s\S]*)$/.exec(message);
+    if (!match) return null;
+
+    const [, rawPostalCode, rawCountryCode, rawServiceClass, rawSecondary] = match;
+    const secondary = rawSecondary
+      .replaceAll(UpsMaxicodeReader.EOT, "")
+      .replace(new RegExp(`${UpsMaxicodeReader.RS}$`), "");
+    const values = secondary.slice(3).split(UpsMaxicodeReader.GS);
+    const versionAndTracking = values.shift() || "";
+    const versionMatch = /^(\d{2})(1Z[A-Z0-9]{8})$/i.exec(versionAndTracking);
+    if (!versionMatch) return null;
+
+    const [
+      scac = "",
+      shipperId = "",
+      julianDayOfPickup = "",
+      shipmentId = "",
+      packageInShipment = "",
+      weightPounds = "",
+      addressValidation = "",
+      shipToStreet = "",
+      shipToCity = "",
+      shipToState = "",
+      ...unknownFields
+    ] = values;
+    while (unknownFields.at(-1) === "") unknownFields.pop();
+
+    const primary = this.recoverMispackedPrimary({
+      rawPostalCode,
+      rawCountryCode,
+      rawServiceClass,
+    });
+    if (!primary) return null;
+
+    return {
+      recognized: true,
+      standardEnvelope: false,
+      format: "01",
+      variant: "headerless-mode3-with-mispacked-primary",
+      structuredCarrierMessageVersion: versionMatch[1],
+      primary,
+      secondary: {
+        trackingNumberEncoded: versionMatch[2].toUpperCase(),
+        scac,
+        shipperId,
+        trackingNumberReconstructed: null,
+        trackingNumberReconstructedFrom: [],
+        julianDayOfPickup: julianDayOfPickup || null,
+        shipmentId: shipmentId || null,
+        packageInShipment: packageInShipment || null,
+        weightPounds: weightPounds || null,
+        addressValidation: addressValidation || null,
+        shipToStreet: shipToStreet || null,
+        shipToCity: shipToCity || null,
+        shipToState: shipToState || null,
+        unknownFields,
+      },
+      compressed: null,
+      warnings: [
+        "Recovered a UPS 01 payload without its ANSI structured-message header.",
+        "Postal and country codes are heuristic recoveries from mispacked Mode 3 primary fields.",
+        "Service class and full tracking number cannot be reconstructed reliably.",
+      ],
+    };
+  }
+
+  recoverMispackedPrimary({ rawPostalCode, rawCountryCode, rawServiceClass }) {
+    const postalMatch = /^(\d{3}) \)\x1e$/.exec(rawPostalCode);
+    if (!postalMatch || !/^\d{3}$/.test(rawCountryCode) || !/^\d{3}$/.test(rawServiceClass)) {
+      return null;
+    }
+
+    const postalCode = `${rawCountryCode.slice(1)}${postalMatch[1]}`;
+    const countryCode = `${rawServiceClass.slice(1)}${rawCountryCode[0]}`;
+    if (!/^\d{5}$/.test(postalCode) || !/^\d{3}$/.test(countryCode)) return null;
+
+    return {
+      postalCode,
+      countryCode,
+      serviceClass: null,
+      recovered: true,
+      recovery: "heuristic-mode3-field-boundary-repair",
+      raw: {
+        postalCode: rawPostalCode,
+        countryCode: rawCountryCode,
+        serviceClass: rawServiceClass,
+      },
     };
   }
 

@@ -82,18 +82,24 @@ function updateUpsSummary(ups) {
 }
 
 function formatUpsResult(ups) {
+  const recoveryText = ups.variant
+    ? "Recovery mode\nHeaderless UPS Mode 3 message with mispacked primary fields.\n\n"
+    : "";
+  const warningText = ups.warnings?.length
+    ? `\n\nWarnings\n${ups.warnings.map((warning) => `- ${warning}`).join("\n")}`
+    : "";
   if (!ups.compressed) {
-    return "UPS routing fields decoded. No Format 07 segment is present.";
+    return `${recoveryText}UPS routing fields decoded. No Format 07 segment is present.${warningText}`;
   }
   if (!ups.compressed.ok) {
-    return "UPS routing fields decoded. Format 07 transport recovered, but its substitutions could not be expanded.";
+    return `UPS routing fields decoded. Format 07 transport recovered, but its substitutions could not be expanded.${warningText}`;
   }
 
   const lines = ups.compressed.fields.nonEmptySegments;
   const suffix = ups.compressed.decoder.complete
     ? ""
     : "\n\nPartial result: the final compressed bits do not form another complete token.";
-  return `UPS Format 07\n${lines.join("\n")}${suffix}`;
+  return `UPS Format 07\n${lines.join("\n")}${suffix}${warningText}`;
 }
 
 function fitContain(sourceWidth, sourceHeight, targetWidth, targetHeight) {
@@ -266,11 +272,17 @@ function updateUIFromAnalysis(analysis) {
   }
 
   const confidencePct = Math.round((analysis.confidence ?? 0) * 1000) / 10;
-  const statusKind = analysis.decode?.decoded ? "live" : confidencePct >= 65 ? "warn" : "bad";
-  const pillText = analysis.decode?.decoded ? "Decoded" : "Analyzed";
-  const statusText = analysis.decode?.decoded
+  const recoveryMode = Boolean(analysis.ups?.variant || analysis.ups?.primary?.recovered);
+  let statusKind = analysis.decode?.decoded ? "live" : confidencePct >= 65 ? "warn" : "bad";
+  let pillText = analysis.decode?.decoded ? "Decoded" : "Analyzed";
+  let statusText = analysis.decode?.decoded
     ? state.phase === "decoded" ? "Decoded · paused" : "Decoded"
     : state.cameraActive ? "Camera live" : pillText;
+  if (recoveryMode) {
+    statusKind = "warn";
+    pillText = "Recovery mode";
+    statusText = "Recovered · review";
+  }
 
   setStatus(statusKind, statusText);
   setResultPill(statusKind, pillText);
@@ -305,6 +317,9 @@ function updateUIFromAnalysis(analysis) {
         .map((byte, index) => `${index.toString(16).padStart(2, "0")} ${byte.toString(16).padStart(2, "0")}`)
         .join("  ")
     : "-";
+  const recoveryNote = recoveryMode
+    ? " Recovery mode: non-standard UPS framing and mispacked primary fields require review."
+    : "";
   const thresholdNote = analysis.threshold !== AUTO_THRESHOLD_CANDIDATES[0]
     ? ` Auto-selected threshold ${analysis.threshold}.`
     : "";
@@ -314,7 +329,7 @@ function updateUIFromAnalysis(analysis) {
       : `Decoded locally in the browser. Source: ${analysis.sourceWidth} x ${analysis.sourceHeight}.`
     : analysis.center.found
       ? analysis.decode?.error || "Bullseye found, but the payload is not fully readable yet."
-      : "No MaxiCode bullseye found in this frame.") + thresholdNote;
+      : "No MaxiCode bullseye found in this frame.") + recoveryNote + thresholdNote;
   els.idleState.hidden = true;
   drawFrame(analysis);
 }
