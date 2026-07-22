@@ -270,8 +270,10 @@ h2 {
 .idle-state {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
   text-align: center;
   pointer-events: none;
@@ -352,6 +354,16 @@ h2 {
   border-radius: 12px;
 }
 
+.result-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.details-btn {
+  display: none;
+}
+
 .icon {
   width: 18px;
   height: 18px;
@@ -381,6 +393,11 @@ h2 {
 }
 
 .result-card {
+  display: grid;
+  gap: 14px;
+}
+
+.result-details {
   display: grid;
   gap: 14px;
 }
@@ -510,28 +527,322 @@ h2 {
 }
 
 @media (max-width: 700px) {
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+  }
+
   .app-shell {
-    width: min(100vw - 14px, 1180px);
-    margin-top: 7px;
+    width: 100%;
+    height: 100svh;
+    min-height: 100svh;
+    margin: 0;
   }
 
-  .scanner-panel,
-  .result-panel {
-    padding: 12px;
-    border-radius: 24px;
+  .topbar {
+    position: fixed;
+    z-index: 50;
+    inset: calc(8px + env(safe-area-inset-top)) 8px auto;
+    min-height: 56px;
+    margin: 0;
+    padding: 8px 10px;
+    flex-direction: row;
+    align-items: center;
+    border-radius: 18px;
+    background: rgba(7, 13, 18, 0.78);
+    box-shadow: 0 12px 38px rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(22px) saturate(1.25);
   }
 
-  .panel-head {
-    flex-direction: column;
+  .brand {
+    gap: 8px;
   }
 
-  .action-row,
-  .metric-grid {
-    grid-template-columns: 1fr;
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brand-title {
+    font-size: 1.05rem;
+  }
+
+  .brand-subtitle {
+    display: none;
+  }
+
+  .topbar-badge {
+    min-height: 28px;
+    padding: 0 10px;
+    align-self: center;
+    font-size: 0.74rem;
+  }
+
+  .shell-grid,
+  .scanner-panel {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .scanner-panel {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #070d12;
+    box-shadow: none;
+  }
+
+  .scanner-panel > .panel-head {
+    position: fixed;
+    z-index: 35;
+    top: calc(72px + env(safe-area-inset-top));
+    left: 12px;
+    right: 12px;
+    margin: 0;
+    pointer-events: none;
+  }
+
+  .scanner-panel > .panel-head > div:first-child {
+    display: none;
+  }
+
+  .header-note {
+    max-width: min(72vw, 28rem);
+    padding: 7px 10px;
+    overflow: hidden;
+    border: 1px solid rgba(122, 185, 207, 0.2);
+    border-radius: 999px;
+    background: rgba(7, 13, 18, 0.68);
+    color: rgba(232, 244, 251, 0.82);
+    text-align: left;
+    text-overflow: ellipsis;
+    backdrop-filter: blur(14px);
   }
 
   .stage {
-    min-height: 68vh;
+    position: fixed;
+    inset: 0;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+    background: #070d12;
+  }
+
+  body.is-camera-active .stage::after {
+    content: "Keep the bullseye inside";
+    position: absolute;
+    z-index: 5;
+    left: 50%;
+    top: 43%;
+    width: min(70vw, 360px);
+    aspect-ratio: 1;
+    display: grid;
+    place-items: end center;
+    padding-bottom: 12px;
+    translate: -50% -50%;
+    border: 1px solid rgba(97, 210, 255, 0.56);
+    border-radius: 28px;
+    background:
+      linear-gradient(var(--cyan), var(--cyan)) left top / 28px 2px no-repeat,
+      linear-gradient(var(--cyan), var(--cyan)) left top / 2px 28px no-repeat,
+      linear-gradient(var(--cyan), var(--cyan)) right top / 28px 2px no-repeat,
+      linear-gradient(var(--cyan), var(--cyan)) right top / 2px 28px no-repeat,
+      linear-gradient(var(--cyan), var(--cyan)) left bottom / 28px 2px no-repeat,
+      linear-gradient(var(--cyan), var(--cyan)) left bottom / 2px 28px no-repeat,
+      linear-gradient(var(--cyan), var(--cyan)) right bottom / 28px 2px no-repeat,
+      linear-gradient(var(--cyan), var(--cyan)) right bottom / 2px 28px no-repeat;
+    color: rgba(232, 244, 251, 0.82);
+    font-size: 0.76rem;
+    letter-spacing: 0.02em;
+    text-shadow: 0 1px 8px #000;
+    pointer-events: none;
+  }
+
+  .idle-state {
+    padding: 92px 24px 250px;
+  }
+
+  .idle-mark {
+    width: 62px;
+    height: 62px;
+    margin-bottom: 12px;
+  }
+
+  .idle-state h2 {
+    font-size: 1.35rem;
+  }
+
+  .idle-state p {
+    max-width: 20rem;
+    font-size: 0.88rem;
+  }
+
+  .action-row {
+    position: fixed;
+    z-index: 46;
+    left: 10px;
+    right: 10px;
+    bottom: calc(156px + env(safe-area-inset-bottom));
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    margin: 0;
+    padding: 7px;
+    border: 1px solid rgba(122, 185, 207, 0.2);
+    border-radius: 20px;
+    background: rgba(7, 13, 18, 0.72);
+    box-shadow: 0 16px 42px rgba(0, 0, 0, 0.34);
+    backdrop-filter: blur(20px) saturate(1.2);
+    transition:
+      opacity 180ms ease,
+      transform 180ms ease;
+  }
+
+  body.is-result-expanded .action-row {
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+  }
+
+  .action-btn,
+  .ghost-btn {
+    min-height: 52px;
+  }
+
+  .action-row .action-btn,
+  .action-row .ghost-btn {
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px;
+    border-radius: 14px;
+    font-size: 0.72rem;
+  }
+
+  .action-row .icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  body.is-camera-active #cameraBtn {
+    border-color: rgba(247, 190, 85, 0.62);
+    background: rgba(92, 55, 13, 0.72);
+    color: #ffe1a4;
+  }
+
+  .hint-row {
+    display: none;
+  }
+
+  .result-panel {
+    position: fixed;
+    z-index: 45;
+    left: 8px;
+    right: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    height: 140px;
+    padding: 10px;
+    overflow: hidden;
+    border-radius: 22px;
+    background: rgba(8, 14, 19, 0.9);
+    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.46);
+    backdrop-filter: blur(24px) saturate(1.25);
+    transition:
+      height 220ms ease,
+      inset 220ms ease,
+      border-radius 220ms ease;
+  }
+
+  .result-panel.is-expanded {
+    top: calc(72px + env(safe-area-inset-top));
+    height: auto;
+    max-height: none;
+    overflow-y: auto;
+    border-radius: 24px;
+  }
+
+  .result-panel .panel-head.compact {
+    align-items: center;
+    margin-bottom: 7px;
+  }
+
+  .result-panel .panel-head.compact h2 {
+    display: none;
+  }
+
+  .result-panel .eyebrow {
+    margin: 0;
+    font-size: 0.78rem;
+  }
+
+  .result-actions {
+    gap: 6px;
+  }
+
+  .details-btn {
+    display: inline-flex;
+  }
+
+  .ghost-btn.small {
+    min-height: 30px;
+    padding: 0 10px;
+    border-radius: 10px;
+    font-size: 0.76rem;
+  }
+
+  .result-card {
+    gap: 7px;
+  }
+
+  .result-pill {
+    min-height: 26px;
+    padding: 0 10px;
+    font-size: 0.74rem;
+  }
+
+  .result-meta {
+    font-size: 0.76rem;
+  }
+
+  .result-text {
+    min-height: 0;
+    max-height: 44px;
+    padding: 8px 10px;
+    overflow: auto;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    line-height: 1.35;
+  }
+
+  .result-details {
+    display: none;
+  }
+
+  .result-panel.is-expanded .panel-head.compact h2 {
+    display: block;
+    margin-top: 4px;
+    font-size: 1.35rem;
+  }
+
+  .result-panel.is-expanded .result-text {
+    max-height: 28svh;
+    padding: 14px;
+    font-size: 0.9rem;
+  }
+
+  .result-panel.is-expanded .result-details {
+    display: grid;
+    gap: 10px;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric {
+    padding: 10px 11px;
+    border-radius: 13px;
   }
 }
 

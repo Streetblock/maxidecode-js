@@ -16,8 +16,11 @@ const els = {
   uploadBtn: document.getElementById("uploadBtn"),
   pasteBtn: document.getElementById("pasteBtn"),
   cameraBtn: document.getElementById("cameraBtn"),
+  cameraBtnLabel: document.getElementById("cameraBtnLabel"),
   clearBtn: document.getElementById("clearBtn"),
   copyBtn: document.getElementById("copyBtn"),
+  resultPanel: document.getElementById("resultPanel"),
+  resultToggle: document.getElementById("resultToggle"),
   dropzone: document.getElementById("dropzone"),
   previewCanvas: document.getElementById("previewCanvas"),
   idleState: document.getElementById("idleState"),
@@ -54,6 +57,22 @@ function fitContain(sourceWidth, sourceHeight, targetWidth, targetHeight) {
   };
 }
 
+function fitCover(sourceWidth, sourceHeight, targetWidth, targetHeight) {
+  if (!sourceWidth || !sourceHeight || !targetWidth || !targetHeight) {
+    return { x: 0, y: 0, width: targetWidth, height: targetHeight, scale: 1 };
+  }
+  const scale = Math.max(targetWidth / sourceWidth, targetHeight / sourceHeight);
+  const width = sourceWidth * scale;
+  const height = sourceHeight * scale;
+  return {
+    x: (targetWidth - width) / 2,
+    y: (targetHeight - height) / 2,
+    width,
+    height,
+    scale,
+  };
+}
+
 function setCanvasSize(canvas, context) {
   const rect = canvas.getBoundingClientRect();
   const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -67,7 +86,7 @@ function setCanvasSize(canvas, context) {
   return { width: rect.width, height: rect.height };
 }
 
-function drawStageBackdrop(label = "Drop or load an image") {
+function drawStageBackdrop() {
   const { width, height } = setCanvasSize(els.previewCanvas, previewCtx);
   previewCtx.clearRect(0, 0, width, height);
 
@@ -105,16 +124,12 @@ function drawStageBackdrop(label = "Drop or load an image") {
   previewCtx.arc(cx, cy, Math.min(width, height) * 0.1, 0, Math.PI * 2);
   previewCtx.stroke();
 
-  previewCtx.fillStyle = "rgba(232, 244, 251, 0.84)";
-  previewCtx.font = "600 18px " + getComputedStyle(document.documentElement).getPropertyValue("--font-head");
-  previewCtx.textAlign = "center";
-  previewCtx.fillText(label, cx, cy + 72);
 }
 
 function drawFrame(analysis = null) {
   const { width, height } = setCanvasSize(els.previewCanvas, previewCtx);
   if (!sourceCanvasHasContent()) {
-    drawStageBackdrop(state.cameraActive ? "Camera live" : "Paste, drop, or upload an image");
+    drawStageBackdrop();
     return;
   }
 
@@ -122,7 +137,8 @@ function drawFrame(analysis = null) {
   previewCtx.fillStyle = "rgba(8, 13, 18, 0.98)";
   previewCtx.fillRect(0, 0, width, height);
 
-  const frame = fitContain(els.sourceCanvas.width, els.sourceCanvas.height, width, height);
+  const fitFrame = state.sourceKind === "camera" ? fitCover : fitContain;
+  const frame = fitFrame(els.sourceCanvas.width, els.sourceCanvas.height, width, height);
   previewCtx.drawImage(els.sourceCanvas, frame.x, frame.y, frame.width, frame.height);
 
   previewCtx.strokeStyle = "rgba(97, 210, 255, 0.14)";
@@ -188,7 +204,7 @@ function updateUIFromAnalysis(analysis) {
     els.rawBytes.textContent = "-";
     els.resultNote.textContent = "Ready for an image.";
     els.idleState.hidden = false;
-    drawStageBackdrop(state.cameraActive ? "Camera live" : "Paste, drop, or upload an image");
+    drawStageBackdrop();
     return;
   }
 
@@ -370,8 +386,13 @@ async function captureCameraFrame() {
     return;
   }
 
-  els.sourceCanvas.width = els.cameraVideo.videoWidth;
-  els.sourceCanvas.height = els.cameraVideo.videoHeight;
+  const maxScanDimension = 960;
+  const cameraScale = Math.min(
+    1,
+    maxScanDimension / Math.max(els.cameraVideo.videoWidth, els.cameraVideo.videoHeight),
+  );
+  els.sourceCanvas.width = Math.max(1, Math.round(els.cameraVideo.videoWidth * cameraScale));
+  els.sourceCanvas.height = Math.max(1, Math.round(els.cameraVideo.videoHeight * cameraScale));
   sourceCtx.drawImage(els.cameraVideo, 0, 0, els.sourceCanvas.width, els.sourceCanvas.height);
   scanSource();
 }
@@ -393,8 +414,15 @@ function stopCamera() {
 }
 
 function updateCameraButton() {
-  const label = state.cameraActive ? "Stop camera" : "Open camera";
-  els.cameraBtn.lastChild.nodeValue = ` ${label}`;
+  els.cameraBtnLabel.textContent = state.cameraActive ? "Stop" : "Camera";
+  document.body.classList.toggle("is-camera-active", state.cameraActive);
+}
+
+function setResultExpanded(expanded) {
+  els.resultPanel.classList.toggle("is-expanded", expanded);
+  document.body.classList.toggle("is-result-expanded", expanded);
+  els.resultToggle.setAttribute("aria-expanded", String(expanded));
+  els.resultToggle.textContent = expanded ? "Close" : "Details";
 }
 
 function clearState() {
@@ -405,6 +433,7 @@ function clearState() {
   els.sourceCanvas.width = 0;
   els.sourceCanvas.height = 0;
   els.fileInput.value = "";
+  setResultExpanded(false);
   updateUIFromAnalysis(null);
 }
 
@@ -460,6 +489,9 @@ function wireEvents() {
 
   els.clearBtn.addEventListener("click", clearState);
   els.copyBtn.addEventListener("click", copyResult);
+  els.resultToggle.addEventListener("click", () => {
+    setResultExpanded(!els.resultPanel.classList.contains("is-expanded"));
+  });
 
   document.addEventListener("paste", async (event) => {
     const handled = await handlePaste(event);
@@ -499,8 +531,9 @@ function updateInitialUI() {
   setStatus("", "Idle");
   setResultPill("", "Waiting");
   els.resultNote.textContent = "Ready for an image.";
+  setResultExpanded(false);
   updateCameraButton();
-  drawStageBackdrop("Paste, drop, or upload an image");
+  drawStageBackdrop();
 }
 
 wireEvents();
