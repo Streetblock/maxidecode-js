@@ -108,3 +108,55 @@ test("parses the documented uncompressed UPS detail fields", () => {
   assert.deepEqual(result.secondary.unknownFields, []);
   assert.equal(result.compressed, null);
 });
+
+test("parses the IDAutomation uncompressed UPS golden message", () => {
+  // IDAutomation MaxiCode FAQ example, preserving every GS, RS and EOT.
+  const idAutomationMessage = [
+    `[)>${RS}01`,
+    "96336091062",
+    "840",
+    "002",
+    "1Z14647438",
+    "UPSN",
+    "410E1W",
+    "195",
+    "", // Shipment ID intentionally empty.
+    "1/1",
+    "", // Package weight intentionally empty.
+    "Y",
+    "135Lightner",
+    "TAMPA",
+    "FL",
+  ].join(GS) + RS + EOT;
+
+  const result = new UpsMaxicodeReader().read(idAutomationMessage);
+
+  assert.equal(result.recognized, true);
+  assert.equal(result.standardEnvelope, true);
+  assert.equal(result.format, "01");
+  assert.equal(result.structuredCarrierMessageVersion, "96");
+  assert.deepEqual(result.primary, {
+    postalCode: "336091062",
+    countryCode: "840",
+    serviceClass: "002",
+  });
+  assert.equal(result.secondary.trackingNumberEncoded, "1Z14647438");
+  assert.equal(result.secondary.scac, "UPSN");
+  assert.equal(result.secondary.shipperId, "410E1W");
+  assert.equal(result.secondary.trackingNumberReconstructed, "1Z410E1W0214647438");
+  assert.deepEqual(result.secondary.trackingNumberReconstructedFrom, [
+    "trackingNumberEncoded",
+    "shipperId",
+    "serviceClass",
+  ]);
+  assert.equal(result.secondary.julianDayOfPickup, "195");
+  assert.equal(result.secondary.shipmentId, null);
+  assert.equal(result.secondary.packageInShipment, "1/1");
+  assert.equal(result.secondary.weightPounds, null);
+  assert.equal(result.secondary.addressValidation, "Y");
+  assert.equal(result.secondary.shipToStreet, "135Lightner");
+  assert.equal(result.secondary.shipToCity, "TAMPA");
+  assert.equal(result.secondary.shipToState, "FL");
+  assert.deepEqual(result.secondary.unknownFields, []);
+  assert.equal(result.compressed, null);
+});
