@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { PNG } from "pngjs";
 import { MaxiCodeScanner } from "../src/maxicode/scanner.js";
+import { UpsMaxicodeReader } from "../src/ups/UpsMaxicodeReader.js";
 
 function parseArgs(argv) {
   const args = {
@@ -71,6 +72,14 @@ const center = scanner.findBullseye();
 const pitch = scanner.estimateModulePitch(center);
 const cells = scanner.sampleHexGrid(center, pitch);
 const decode = scanner.decode(cells);
+let ups = null;
+if (decode.decoded && decode.text) {
+  try {
+    ups = new UpsMaxicodeReader().read(decode.text);
+  } catch (error) {
+    ups = { recognized: false, error: error?.message || String(error) };
+  }
+}
 
 console.log(
   JSON.stringify(
@@ -83,6 +92,7 @@ console.log(
       center,
       pitch,
       decode,
+      ups,
     },
     null,
     2,
