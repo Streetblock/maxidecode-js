@@ -1,4 +1,5 @@
-import { MaxiCodeScanner, clamp } from "./maxicode/scanner.js";
+import { clamp } from "./maxicode/scanner.js";
+import { AUTO_THRESHOLD_CANDIDATES, scanWithThresholds } from "./maxicode/adaptiveScan.js";
 
 const els = {
   statusPill: document.getElementById("statusPill"),
@@ -38,6 +39,7 @@ const state = {
   sourceKind: "idle",
   analysis: null,
   dragActive: false,
+  thresholdAttempt: 0,
 };
 
 const previewCtx = els.previewCanvas.getContext("2d");
@@ -236,13 +238,16 @@ function updateUIFromAnalysis(analysis) {
         .map((byte, index) => `${index.toString(16).padStart(2, "0")} ${byte.toString(16).padStart(2, "0")}`)
         .join("  ")
     : "-";
-  els.resultNote.textContent = analysis.decode?.decoded
+  const thresholdNote = analysis.threshold !== AUTO_THRESHOLD_CANDIDATES[0]
+    ? ` Auto-selected threshold ${analysis.threshold}.`
+    : "";
+  els.resultNote.textContent = (analysis.decode?.decoded
     ? state.phase === "decoded" && analysis.sourceKind === "camera"
       ? `Decoded locally. The successful camera frame is frozen (${analysis.sourceWidth} x ${analysis.sourceHeight}).`
       : `Decoded locally in the browser. Source: ${analysis.sourceWidth} x ${analysis.sourceHeight}.`
     : analysis.center.found
       ? analysis.decode?.error || "Bullseye found, but the payload is not fully readable yet."
-      : "No MaxiCode bullseye found in this frame.";
+      : "No MaxiCode bullseye found in this frame.") + thresholdNote;
   els.idleState.hidden = true;
   drawFrame(analysis);
 }
@@ -255,17 +260,13 @@ function scanSource() {
   }
 
   const imageData = sourceCtx.getImageData(0, 0, els.sourceCanvas.width, els.sourceCanvas.height);
-  const scanner = new MaxiCodeScanner(imageData, {
-    threshold: 128,
-    invert: false,
-    expectedRings: 5,
-    sensitivity: 0.7,
+  const thresholds = state.sourceKind === "camera"
+    ? [AUTO_THRESHOLD_CANDIDATES[state.thresholdAttempt % AUTO_THRESHOLD_CANDIDATES.length]]
+    : AUTO_THRESHOLD_CANDIDATES;
+  state.thresholdAttempt += 1;
+  const { center, pitch, cells, decode, threshold, attempts } = scanWithThresholds(imageData, {
+    thresholds,
   });
-
-  const center = scanner.findBullseye();
-  const pitch = center.found ? scanner.estimateModulePitch(center) : center.bandWidth || 0;
-  const cells = center.found ? scanner.sampleHexGrid(center, pitch) : [];
-  const decode = scanner.decode(cells);
   const confidence = decode.decoded
     ? clamp(0.72 + center.confidence * 0.28, 0, 1)
     : clamp(center.confidence * 0.72 + decode.density * 0.2, 0, 1);
@@ -275,6 +276,8 @@ function scanSource() {
     pitch,
     cells,
     decode,
+    threshold,
+    thresholdAttempts: attempts,
     confidence,
     sourceKind: state.sourceKind,
     sourceName: state.sourceName,
@@ -296,6 +299,7 @@ async function loadFile(file) {
   state.phase = "analyzing";
   state.sourceKind = "image";
   state.sourceName = file.name || "Loaded image";
+  state.thresholdAttempt = 0;
 
   const drawable = await loadDrawable(file);
   els.sourceCanvas.width = drawable.width;
@@ -382,6 +386,7 @@ async function startCamera() {
     state.phase = "scanning";
     state.sourceKind = "camera";
     state.sourceName = "Live camera";
+    state.thresholdAttempt = 0;
     els.cameraVideo.srcObject = stream;
     await els.cameraVideo.play();
 
@@ -476,6 +481,7 @@ function clearState() {
   state.sourceKind = "idle";
   state.sourceName = "";
   state.analysis = null;
+  state.thresholdAttempt = 0;
   els.sourceCanvas.width = 0;
   els.sourceCanvas.height = 0;
   els.fileInput.value = "";
