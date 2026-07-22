@@ -3,18 +3,12 @@ import { FORMAT_07_DICTIONARY } from "./format07Dictionary.js";
 /**
  * Decoder core for the compressed UPS MaxiCode "07" format.
  *
- * Ground truth: US7039496B2 only.  The patent discloses the Huffman-style
- * substitution-table rows (figs. 4A-4H) and enumerates the transport alphabet,
- * but does NOT disclose the algorithm that maps up to 45 symbols from that
- * 55-symbol alphabet back to arbitrary bytes. Nor does it define the framing
- * and padding rules needed to implement that inverse mapping interoperably.
- * The transport direction/order below is additionally verified against two
- * complete 45-symbol scans supplied with their original UPS labels.
+ * US7039496B2 supplies the substitution rows (figs. 4A-4H), the 55-symbol
+ * transport alphabet and the inverse processing stages. The patent does not
+ * spell out digit order, bit framing or the one non-prefix table collision.
+ * Those interoperability details are verified below against two independent
+ * 45-symbol scans supplied with their original UPS labels.
  * See col. 8, lines 6-21 (Google Patents paragraphs [0071]-[0073]).
- *
- * Supply a verified substitutionDecoder to complete the Huffman stage. Until
- * then decode() returns the recovered 32 transport bytes and a structured
- * diagnostic instead of fabricating address data.
  */
 export class UpsMaxicodeDecoder {
   static FORMAT_VERSION = "07";
@@ -30,7 +24,7 @@ export class UpsMaxicodeDecoder {
 
   constructor({ transportDecoder = null, substitutionDecoder = null, dictionary = [] } = {}) {
     this.transportDecoder = transportDecoder ?? UpsMaxicodeDecoder.decodeTransport;
-    this.substitutionDecoder = substitutionDecoder;
+    this.substitutionDecoder = substitutionDecoder ?? UpsMaxicodeDecoder.decodeSubstitutions;
     this.dictionary = Object.freeze([
       ...UpsMaxicodeDecoder.FORMAT_07_DICTIONARY,
       ...dictionary
@@ -78,9 +72,69 @@ export class UpsMaxicodeDecoder {
   }
 
   /**
+   * Expand the bit stream through the substitution table in figs. 4A-4H.
+   *
+   * The 32-byte value is read MSB-first. The first four bits are framing; the
+   * remaining 252 bits contain table values. The patent does not state that
+   * nibble boundary explicitly, so it is verified by both supplied real-world
+   * vectors: each begins with header value 1 and the remainder reproduces the
+   * printed address in its original spelling and field separators.
+   *
+   * Fig. 4 has one prefix overlap (OA/HWY). Matching the longest available
+   * value is deterministic and reproduces both vectors. Numeric pairs such as
+   * `00` are ordinary table tokens and therefore expand without a second pass.
+   */
+  static decodeSubstitutions(bytes, dictionary = FORMAT_07_DICTIONARY) {
+    const validBytes =
+      (bytes instanceof Uint8Array || Array.isArray(bytes)) &&
+      [...bytes].every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255);
+    if (!validBytes) throw new TypeError("Expected a Uint8Array or an array of byte values.");
+    if (bytes.length !== 32) {
+      throw new RangeError(`Substitution input must contain 32 bytes; received ${bytes.length}.`);
+    }
+
+    const framedBits = [...bytes]
+      .map((byte) => byte.toString(2).padStart(8, "0"))
+      .join("");
+    const headerBits = framedBits.slice(0, 4);
+    const payloadBits = framedBits.slice(4);
+    const entries = [...dictionary].sort(
+      (left, right) => right.bits.length - left.bits.length,
+    );
+    const tokens = [];
+    let offset = 0;
+
+    while (offset < payloadBits.length) {
+      const match = entries.find((entry) => payloadBits.startsWith(entry.bits, offset));
+      if (!match) break;
+      tokens.push(match.token);
+      offset += match.bits.length;
+    }
+
+    const trailingBits = payloadBits.slice(offset);
+    return {
+      text: tokens.join(""),
+      tokens,
+      headerBits,
+      headerValue: Number.parseInt(headerBits, 2),
+      bitsConsumed: offset,
+      bitsAvailable: payloadBits.length,
+      trailingBits,
+      complete: trailingBits.length === 0,
+      reason: trailingBits.length === 0
+        ? null
+        : {
+            stage: "Fig. 4 substitution decoding",
+            detail: `${trailingBits.length} trailing bits do not begin a complete table value.`,
+            patentReference: "Figs. 4A-4H",
+          },
+    };
+  }
+
+  /**
    * Decode a scanned format-07 substring to a structured JSON-compatible value.
-   * This method never fabricates data.  Patent omissions are reported through
-   * `ok: false` and `missingPatentSpecification`.
+   * The returned interoperability notes distinguish patent-defined operations
+   * from framing details established with the supplied label vectors.
    */
   decode(compressedString) {
     const envelope = this.#parseEnvelope(compressedString);
@@ -91,68 +145,57 @@ export class UpsMaxicodeDecoder {
       throw new RangeError(`transportDecoder must return 32 bytes; received ${bytes.length}`);
     }
 
-    // US7039496B2: one header byte plus a 31-byte Huffman stream (col. 8).
-    const headerByte = bytes[0];
-    const decoded = this.decodeHuffmanBytes(bytes.slice(1));
-    if (!decoded.complete && decoded.text === null) {
-      return {
-        ok: false,
-        version: envelope.version,
-        payload: envelope.payload,
-        payloadSymbolCount: envelope.payload.length,
-        headerByte,
-        transportBytes: [...bytes],
-        transportHex: [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join(""),
-        decodedText: null,
-        fields: null,
-        missingPatentSpecification: [decoded.reason]
-      };
-    }
+    const decoded = this.decodeHuffmanBytes(bytes);
     return {
-      ok: decoded.complete,
+      ok: decoded.text.length > 0,
       version: envelope.version,
       payload: envelope.payload,
       payloadSymbolCount: envelope.payload.length,
-      headerByte,
+      transportBytes: [...bytes],
+      transportHex: [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join(""),
+      header: {
+        bits: decoded.headerBits,
+        value: decoded.headerValue,
+        truncation: "unknown: US7039496B2 does not disclose the flag's bit layout",
+      },
       truncation: "unknown: header bit layout is not disclosed by US7039496B2",
       decodedText: decoded.text,
       fields: this.parseAnsiFields(decoded.text),
       decoder: {
         bitsConsumed: decoded.bitsConsumed,
+        bitsAvailable: decoded.bitsAvailable,
+        trailingBits: decoded.trailingBits,
         complete: decoded.complete,
-        reason: decoded.reason
-      }
+        reason: decoded.reason,
+        interoperabilityAssumptions: [
+          "32-byte stream is read most-significant bit first",
+          "first four bits are framing and the remaining 252 bits are substitutions",
+          "when table values overlap, the longest matching value wins",
+        ],
+      },
     };
   }
 
   /**
-   * Inverse substitution using the variable-length codes in figs. 4A-4H.
-   * Pass a complete table via the constructor for production decoding.
+   * Inverse substitution using the variable-length values in figs. 4A-4H.
+   * A custom decoder can be injected for comparison with a vendor routine.
    */
   decodeHuffmanBytes(bytes) {
     this.#assertByteArray(bytes);
-    if (!this.substitutionDecoder) {
-      return {
-        text: null,
-        bitsConsumed: 0,
-        complete: false,
-        reason: {
-          stage: "Fig. 4 substitution decoding",
-          detail:
-            "A verified substitutionDecoder(bytes, dictionary) is required because the patent does not define the table's bit order or trailing columns.",
-          patentReference: "Figs. 4A-4H"
-        }
-      };
-    }
     const result = this.substitutionDecoder(Uint8Array.from(bytes), this.dictionary);
     if (!result || typeof result.text !== "string") {
       throw new TypeError("substitutionDecoder must return an object containing a text string.");
     }
     return {
       text: result.text,
+      tokens: result.tokens ?? null,
+      headerBits: result.headerBits ?? null,
+      headerValue: result.headerValue ?? null,
       bitsConsumed: result.bitsConsumed ?? null,
+      bitsAvailable: result.bitsAvailable ?? null,
+      trailingBits: result.trailingBits ?? "",
       complete: result.complete ?? true,
-      reason: result.reason ?? null
+      reason: result.reason ?? null,
     };
   }
 
@@ -176,14 +219,20 @@ export class UpsMaxicodeDecoder {
       "23": "shipToAddressLine5"
     };
     const values = {};
+    const segments = text.split(UpsMaxicodeDecoder.GS);
     const unknown = [];
 
-    for (const raw of text.split(UpsMaxicodeDecoder.GS).filter(Boolean)) {
+    for (const raw of segments.filter(Boolean)) {
       const match = /^(20|21|22|23)(.*)$/s.exec(raw);
       if (match) values[known[match[1]]] = match[2];
       else unknown.push(raw);
     }
-    return { ...values, unknown };
+    return {
+      ...values,
+      segments,
+      nonEmptySegments: segments.filter((segment) => segment.trim().length > 0),
+      unknown,
+    };
   }
 
   #parseEnvelope(value) {

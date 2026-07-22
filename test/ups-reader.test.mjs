@@ -44,6 +44,14 @@ test("reads routing and compressed segments without losing payload controls", ()
     result.compressed.transportHex,
     "REDACTED_FORMAT07_HEX_A",
   );
+  assert.equal(
+    result.compressed.decodedText,
+    `TEST CITY${GS}  ${GS}TEST STREET 1${GS}`,
+  );
+  assert.deepEqual(result.compressed.fields.nonEmptySegments, [
+    "TEST CITY",
+    "TEST STREET 1",
+  ]);
 });
 
 test("reports a carrier-neutral MaxiCode message as unrecognized", () => {
