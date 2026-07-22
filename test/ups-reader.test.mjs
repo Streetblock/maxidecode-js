@@ -14,7 +14,6 @@ const routing = [
   "1Z50147020",
   "UPSN",
   "123A7V",
-  "unused-field",
 ].join(GS);
 const message = `[)>${RS}${routing}${RS}07${payload}${RS}${EOT}`;
 
@@ -24,12 +23,22 @@ test("reads routing and compressed segments without losing payload controls", ()
   assert.equal(result.recognized, true);
   assert.equal(result.standardEnvelope, true);
   assert.equal(result.format, "01");
-  assert.equal(result.routing.postalCode, "41352");
-  assert.equal(result.routing.countryCode, "276");
-  assert.equal(result.routing.serviceClass, "068");
-  assert.equal(result.routing.scac, "UPSN");
-  assert.equal(result.routing.trackingNumber, "1Z123A7V6850147020");
-  assert.deepEqual(result.routing.additionalFields, ["unused-field"]);
+  assert.equal(result.structuredCarrierMessageVersion, "96");
+  assert.equal(result.primary.postalCode, "41352");
+  assert.equal(result.primary.countryCode, "276");
+  assert.equal(result.primary.serviceClass, "068");
+  assert.equal(result.secondary.trackingNumberEncoded, "1Z50147020");
+  assert.equal(result.secondary.scac, "UPSN");
+  assert.equal(result.secondary.shipperId, "123A7V");
+  assert.equal(result.secondary.trackingNumberReconstructed, "1Z123A7V6850147020");
+  assert.deepEqual(result.secondary.trackingNumberReconstructedFrom, [
+    "trackingNumberEncoded",
+    "shipperId",
+    "serviceClass",
+  ]);
+  assert.equal(result.secondary.julianDayOfPickup, null);
+  assert.equal(result.secondary.shipmentId, null);
+  assert.deepEqual(result.secondary.unknownFields, []);
   assert.equal(result.compressed.payload, payload);
   assert.equal(
     result.compressed.transportHex,
@@ -41,7 +50,8 @@ test("reports a carrier-neutral MaxiCode message as unrecognized", () => {
   const result = new UpsMaxicodeReader().read("plain MaxiCode data");
 
   assert.equal(result.recognized, false);
-  assert.equal(result.routing, null);
+  assert.equal(result.primary, null);
+  assert.equal(result.secondary, null);
 });
 
 test("does not fabricate a tracking number from incomplete routing data", () => {

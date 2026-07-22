@@ -33,7 +33,9 @@ export class UpsMaxicodeReader {
         recognized: false,
         standardEnvelope: hasStructuredHeader,
         reason: "No UPS 01 routing segment found.",
-        routing: null,
+        structuredCarrierMessageVersion: null,
+        primary: null,
+        secondary: null,
         compressed: null,
       };
     }
@@ -43,7 +45,9 @@ export class UpsMaxicodeReader {
       recognized: true,
       standardEnvelope: hasStructuredHeader,
       format: "01",
-      routing,
+      structuredCarrierMessageVersion: routing.structuredCarrierMessageVersion,
+      primary: routing.primary,
+      secondary: routing.secondary,
       compressed: compressedSegment ? this.format07Decoder.decode(compressedSegment) : null,
     };
   }
@@ -56,25 +60,57 @@ export class UpsMaxicodeReader {
     const values = segment.slice(2).split(UpsMaxicodeReader.GS);
     if (values[0] === "") values.shift();
 
-    const [postalField = "", countryCode = "", serviceClass = "", trackingFragment = "", scac = "", shipperId = "", ...additionalFields] = values;
+    const [
+      postalField = "",
+      countryCode = "",
+      serviceClass = "",
+      trackingNumberEncoded = "",
+      scac = "",
+      shipperId = "",
+      julianDayOfPickup = "",
+      shipmentId = "",
+      packageInShipment = "",
+      weightPounds = "",
+      addressValidation = "",
+      shipToStreet = "",
+      shipToCity = "",
+      shipToState = "",
+      ...unknownFields
+    ] = values;
     const postalMatch = /^(\d{2})(.*)$/s.exec(postalField);
-    const routingQualifier = postalMatch?.[1] ?? null;
+    const structuredCarrierMessageVersion = postalMatch?.[1] ?? null;
     const postalCode = (postalMatch?.[2] ?? postalField).trimEnd();
+    const trackingNumberReconstructed = this.reconstructTrackingNumber({
+      trackingFragment: trackingNumberEncoded,
+      shipperId,
+      serviceClass,
+    });
 
     return {
-      routingQualifier,
-      postalCode,
-      countryCode,
-      serviceClass,
-      trackingFragment,
-      scac,
-      shipperId,
-      trackingNumber: this.reconstructTrackingNumber({
-        trackingFragment,
-        shipperId,
+      structuredCarrierMessageVersion,
+      primary: {
+        postalCode,
+        countryCode,
         serviceClass,
-      }),
-      additionalFields,
+      },
+      secondary: {
+        trackingNumberEncoded,
+        scac,
+        shipperId,
+        trackingNumberReconstructed,
+        trackingNumberReconstructedFrom: trackingNumberReconstructed
+          ? ["trackingNumberEncoded", "shipperId", "serviceClass"]
+          : [],
+        julianDayOfPickup: julianDayOfPickup || null,
+        shipmentId: shipmentId || null,
+        packageInShipment: packageInShipment || null,
+        weightPounds: weightPounds || null,
+        addressValidation: addressValidation || null,
+        shipToStreet: shipToStreet || null,
+        shipToCity: shipToCity || null,
+        shipToState: shipToState || null,
+        unknownFields,
+      },
     };
   }
 
