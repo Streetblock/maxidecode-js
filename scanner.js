@@ -14,6 +14,13 @@ function median(values) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+function standardDeviation(values) {
+  if (!values.length) return 0;
+  const average = mean(values);
+  const variance = mean(values.map((value) => (value - average) ** 2));
+  return Math.sqrt(variance);
+}
+
 function bitsToBytes(bits) {
   const bytes = [];
   for (let i = 0; i < bits.length; i += 8) {
@@ -697,7 +704,9 @@ export class MaxiCodeScanner {
     for (let y = 0; y < this.height; y += 2) {
       for (let x = 0; x < this.width; x += 2) {
         const value = gray[y * this.width + x];
-        const darkness = clamp((threshold - value) / 255, 0, 1);
+        const darkness = this.options.invert
+          ? clamp((value - threshold) / 255, 0, 1)
+          : clamp((threshold - value) / 255, 0, 1);
         if (darkness <= 0) continue;
         const weight = darkness * darkness;
         sumX += x * weight;
@@ -713,126 +722,283 @@ export class MaxiCodeScanner {
     return { x: sumX / sumW, y: sumY / sumW };
   }
 
-  scoreBullseyeAt(x, y, anchor) {
-    const gray = this.grayscale();
+  estimateSymbolBandWidth() {
+    const rect = getEnclosingRectangle(this.binarize(), this.width, this.height);
+    if (!rect) return null;
+    const horizontalPitch = rect[2] / MAXICODE_WIDTH;
+    const verticalPitch = rect[3] / (MAXICODE_HEIGHT * 0.8660254037844386);
+    return median([horizontalPitch, verticalPitch]) * 0.78;
+  }
+
+  bullseyeBandWidths(expectedBandWidth = null) {
     const minDim = Math.min(this.width, this.height);
-    const expectedRings = Number(this.options.expectedRings) || 5;
-    const outerRadius = minDim * (0.12 + this.options.sensitivity * 0.09);
-    const step = outerRadius / Math.max(expectedRings, 1);
-    const radii = Array.from({ length: expectedRings }, (_, index) => (index + 1) * step);
-    const expected = radii.map((_, index) => (index % 2 === 0 ? 1 : 0));
+    const broadMinimum = Math.max(1.25, minDim / 240);
+    const broadMaximum = Math.max(broadMinimum, minDim * 0.075);
+    const minBandWidth = expectedBandWidth
+      ? Math.max(broadMinimum, expectedBandWidth * 0.5)
+      : broadMinimum;
+    const maxBandWidth = expectedBandWidth
+      ? Math.min(broadMaximum, Math.max(minBandWidth, expectedBandWidth * 1.55))
+      : broadMaximum;
+    const widths = [];
 
-    let score = 0;
-    let sampleCount = 0;
+    for (let width = minBandWidth; width <= maxBandWidth * 1.001; width *= 1.18) {
+      widths.push(width);
+    }
 
-    for (let rIndex = 0; rIndex < radii.length; rIndex += 1) {
-      const radius = radii[rIndex];
-      let ringDark = 0;
-      let ringSamples = 0;
+    if (!widths.length || widths[widths.length - 1] < maxBandWidth * 0.92) {
+      widths.push(maxBandWidth);
+    }
 
-      for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 12) {
-        const sample = sampleGray(gray, this.width, this.height, x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
-        ringDark += sample < this.options.threshold ? 1 : 0;
-        ringSamples += 1;
+    return widths;
+  }
+
+  scoreBullseyeAtScale(x, y, bandWidth, anchor) {
+    const gray = this.grayscale();
+    const expectedBands = Math.max(6, (Number(this.options.expectedRings) || 5) + 1);
+    const outerRadius = bandWidth * expectedBands;
+    const edgeClearance = Math.min(x, y, this.width - 1 - x, this.height - 1 - y);
+    if (edgeClearance < outerRadius * 1.03) {
+      return { score: -Infinity, contrast: 0, outerRadius, bandWidth, anchorAgreement: 0 };
+    }
+
+    const threshold = this.options.threshold;
+    const angleCount = 16;
+    const bandMeans = [];
+    const spokeMatches = new Uint8Array(angleCount);
+    let matchingSamples = 0;
+    let totalSamples = 0;
+    let uniformity = 0;
+    let symmetry = 0;
+
+    const isInk = (value) => (this.options.invert ? value >= threshold : value < threshold);
+    const inkLevel = (value) => (this.options.invert ? value : 255 - value);
+
+    for (let band = 0; band < expectedBands; band += 1) {
+      const radius = (band + 0.5) * bandWidth;
+      const values = [];
+      const expectedInk = band % 2 === 1;
+
+      for (let angleIndex = 0; angleIndex < angleCount; angleIndex += 1) {
+        const angle = (angleIndex / angleCount) * Math.PI * 2;
+        const value = sampleGray(
+          gray,
+          this.width,
+          this.height,
+          x + Math.cos(angle) * radius,
+          y + Math.sin(angle) * radius,
+        );
+        values.push(value);
+        const matches = isInk(value) === expectedInk;
+        matchingSamples += matches ? 1 : 0;
+        spokeMatches[angleIndex] += matches ? 1 : 0;
+        totalSamples += 1;
       }
 
-      const fraction = ringDark / Math.max(ringSamples, 1);
-      score += expected[rIndex] ? fraction : 1 - fraction;
-      sampleCount += 1;
+      bandMeans.push(mean(values.map(inkLevel)));
+      uniformity += clamp(1 - standardDeviation(values) / 96, 0, 1);
+
+      for (let angleIndex = 0; angleIndex < angleCount / 2; angleIndex += 1) {
+        symmetry += 1 - Math.abs(values[angleIndex] - values[angleIndex + angleCount / 2]) / 255;
+      }
     }
+
+    const inkBands = bandMeans.filter((_, index) => index % 2 === 1);
+    const paperBands = bandMeans.filter((_, index) => index % 2 === 0);
+    const contrast = clamp((mean(inkBands) - mean(paperBands)) / 112, 0, 1);
+    const classification = matchingSamples / Math.max(totalSamples, 1);
+    const spokeConsistency = spokeMatches.reduce(
+      (sum, matches) => sum + (matches === expectedBands ? 1 : 0),
+      0,
+    ) / angleCount;
+    uniformity /= expectedBands;
+    symmetry /= expectedBands * (angleCount / 2);
+
+    let quietMatches = 0;
+    for (let angleIndex = 0; angleIndex < angleCount; angleIndex += 1) {
+      const angle = (angleIndex / angleCount) * Math.PI * 2;
+      const value = sampleGray(
+        gray,
+        this.width,
+        this.height,
+        x + Math.cos(angle) * outerRadius * 1.1,
+        y + Math.sin(angle) * outerRadius * 1.1,
+      );
+      quietMatches += isInk(value) ? 0 : 1;
+    }
+    const quietZone = quietMatches / angleCount;
 
     const centerTone = sampleGray(gray, this.width, this.height, x, y);
-    const centerDarkness = clamp((this.options.threshold - centerTone) / 255, 0, 1);
-    score += centerDarkness * 1.1;
-
-    let quietZone = 0;
-    let quietSamples = 0;
-    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 10) {
-      const sample = sampleGray(gray, this.width, this.height, x + Math.cos(angle) * outerRadius * 1.22, y + Math.sin(angle) * outerRadius * 1.22);
-      quietZone += sample >= this.options.threshold ? 1 : 0;
-      quietSamples += 1;
-    }
-    score += (quietZone / Math.max(quietSamples, 1)) * 0.9;
-
-    let symmetry = 0;
-    for (let angle = 0; angle < Math.PI; angle += Math.PI / 8) {
-      const radius = outerRadius * 0.82;
-      const a = sampleGray(gray, this.width, this.height, x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
-      const b = sampleGray(gray, this.width, this.height, x - Math.cos(angle) * radius, y - Math.sin(angle) * radius);
-      symmetry += 1 - Math.abs(a - b) / 255;
-    }
-    symmetry /= 8;
-    score += symmetry * 0.55;
-
+    const centerStrength = clamp((160 - inkLevel(centerTone)) / 128, 0, 1);
+    let anchorAgreement = 0;
     if (anchor) {
       const anchorDistance = Math.hypot(x - anchor.x, y - anchor.y);
-      const anchorMax = Math.max(this.width, this.height) * 0.35;
-      const anchorBonus = clamp(1 - anchorDistance / anchorMax, 0, 1);
-      score += anchorBonus * 0.65;
+      const anchorMax = Math.max(this.width, this.height) * 0.5;
+      anchorAgreement = clamp(1 - anchorDistance / anchorMax, 0, 1);
     }
 
-    const edgeClearance = Math.min(x, y, this.width - x, this.height - y);
-    const edgePenalty = clamp(1 - edgeClearance / (outerRadius * 1.25), 0, 1);
-    score -= edgePenalty * 1.15;
+    const score =
+      classification * 0.28 +
+      spokeConsistency * 0.24 +
+      contrast * 0.22 +
+      uniformity * 0.08 +
+      symmetry * 0.1 +
+      quietZone * 0.04 +
+      centerStrength * 0.04;
 
-    const background = this.estimateBackgroundLevel();
-    const contrast = Math.abs(background - centerTone) / 255;
-    score += contrast * 0.35;
+    return { score, contrast, outerRadius, bandWidth, anchorAgreement };
+  }
 
-    return score / Math.max(sampleCount, 1);
+  scoreBullseyeAt(x, y, anchor, bandWidth = null) {
+    const widths = bandWidth ? [bandWidth] : this.bullseyeBandWidths();
+    let bestScore = -Infinity;
+    for (const width of widths) {
+      bestScore = Math.max(bestScore, this.scoreBullseyeAtScale(x, y, width, anchor).score);
+    }
+    return bestScore;
   }
 
   findBullseye() {
     const anchor = this.estimateDarkCentroid();
     const minDim = Math.min(this.width, this.height);
-    const searchRadius = minDim * 0.28;
-    const step = Math.max(6, Math.round(16 - this.options.sensitivity * 6));
-    const margin = Math.round(minDim * 0.06);
+    const gray = this.grayscale();
+    const expectedBandWidth = this.estimateSymbolBandWidth();
+    if (!expectedBandWidth) {
+      return {
+        x: this.width / 2,
+        y: this.height / 2,
+        score: -Infinity,
+        confidence: 0,
+        radius: 0,
+        bandWidth: 0,
+        found: false,
+      };
+    }
+    const widths = this.bullseyeBandWidths(expectedBandWidth);
+    const step = Math.max(3, Math.round(minDim / (52 + this.options.sensitivity * 18)));
+    const threshold = this.options.threshold;
+    const isInk = (value) => (this.options.invert ? value >= threshold : value < threshold);
+    let best = {
+      x: anchor.x,
+      y: anchor.y,
+      score: -Infinity,
+      contrast: 0,
+      bandWidth: minDim / 30,
+      outerRadius: minDim / 6,
+      rankScore: -Infinity,
+    };
 
-    let best = { x: anchor.x, y: anchor.y, score: -Infinity };
+    const rankCandidate = (candidate) => {
+      const scaleAgreement = expectedBandWidth
+        ? Math.exp(-Math.abs(Math.log(candidate.bandWidth / expectedBandWidth)) * 2.2)
+        : 0.5;
+      return {
+        ...candidate,
+        scaleAgreement,
+        rankScore: candidate.score + candidate.anchorAgreement * 0.12 + scaleAgreement * 0.12,
+      };
+    };
+    const passesRingProbe = (x, y, bandWidth) => {
+      let middleInk = 0;
+      let outerInk = 0;
+      const probes = 8;
+      for (let index = 0; index < probes; index += 1) {
+        const angle = (index / probes) * Math.PI * 2;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        middleInk += isInk(sampleGray(gray, this.width, this.height, x + cos * bandWidth * 1.5, y + sin * bandWidth * 1.5)) ? 1 : 0;
+        outerInk += isInk(sampleGray(gray, this.width, this.height, x + cos * bandWidth * 5.5, y + sin * bandWidth * 5.5)) ? 1 : 0;
+      }
+      return middleInk >= probes / 2 && outerInk >= probes / 2;
+    };
 
-    for (let y = margin; y < this.height - margin; y += step) {
-      for (let x = margin; x < this.width - margin; x += step) {
-        if (Math.hypot(x - anchor.x, y - anchor.y) > searchRadius) continue;
-        const score = this.scoreBullseyeAt(x, y, anchor);
-        if (score > best.score) {
-          best = { x, y, score };
+    for (let y = Math.floor(step / 2); y < this.height; y += step) {
+      for (let x = Math.floor(step / 2); x < this.width; x += step) {
+        if (isInk(sampleGray(gray, this.width, this.height, x, y))) continue;
+        for (const bandWidth of widths) {
+          if (!passesRingProbe(x, y, bandWidth)) continue;
+          const candidate = rankCandidate(this.scoreBullseyeAtScale(x, y, bandWidth, anchor));
+          if (candidate.rankScore > best.rankScore) {
+            best = { x, y, ...candidate };
+          }
         }
       }
     }
 
-    const refineStep = Math.max(2, Math.round(step / 3));
-    let refined = best;
-    for (let y = best.y - step; y <= best.y + step; y += refineStep) {
-      if (y < margin || y >= this.height - margin) continue;
-      for (let x = best.x - step; x <= best.x + step; x += refineStep) {
-        if (x < margin || x >= this.width - margin) continue;
-        if (Math.hypot(x - anchor.x, y - anchor.y) > searchRadius * 1.1) continue;
-        const score = this.scoreBullseyeAt(x, y, anchor);
-        if (score > refined.score) {
-          refined = { x, y, score };
+    if (Number.isFinite(best.score)) {
+      const refineSteps = [Math.max(1, Math.round(step / 3)), 1];
+      for (const refineStep of refineSteps) {
+        const origin = best;
+        const scaleFactors = [0.9, 0.95, 1, 1.05, 1.1];
+        for (let y = origin.y - step; y <= origin.y + step; y += refineStep) {
+          for (let x = origin.x - step; x <= origin.x + step; x += refineStep) {
+            for (const scaleFactor of scaleFactors) {
+              const candidate = rankCandidate(
+                this.scoreBullseyeAtScale(x, y, origin.bandWidth * scaleFactor, anchor),
+              );
+              if (candidate.rankScore > best.rankScore) {
+                best = { x, y, ...candidate };
+              }
+            }
+          }
+        }
+      }
+
+      // The alternating rings provide the scale; the white center disc gives the most
+      // stable sub-grid center after the coarse radial search has converged.
+      const discRadius = best.bandWidth * 1.45;
+      let sumX = 0;
+      let sumY = 0;
+      let sumWeight = 0;
+      for (let y = Math.floor(best.y - discRadius); y <= Math.ceil(best.y + discRadius); y += 1) {
+        if (y < 0 || y >= this.height) continue;
+        for (let x = Math.floor(best.x - discRadius); x <= Math.ceil(best.x + discRadius); x += 1) {
+          if (x < 0 || x >= this.width || Math.hypot(x - best.x, y - best.y) > discRadius) continue;
+          const value = gray[y * this.width + x];
+          if (isInk(value)) continue;
+          const weight = this.options.invert ? (255 - value) / 255 : value / 255;
+          sumX += x * weight;
+          sumY += y * weight;
+          sumWeight += weight;
+        }
+      }
+
+      if (sumWeight) {
+        const discX = sumX / sumWeight;
+        const discY = sumY / sumWeight;
+        if (Math.hypot(discX - best.x, discY - best.y) <= best.bandWidth * 0.65) {
+          const centered = rankCandidate(this.scoreBullseyeAtScale(discX, discY, best.bandWidth, anchor));
+          best = { x: discX, y: discY, ...centered };
         }
       }
     }
 
-    const confidence = clamp((refined.score - 0.55) / 0.45, 0, 1);
-    const radius = Math.min(this.width, this.height) * (0.15 + confidence * 0.06);
+    const confidence = Number.isFinite(best.rankScore) ? clamp((best.rankScore - 0.67) / 0.3, 0, 1) : 0;
+    const found = confidence >= 0.35 && best.contrast >= 0.22;
+    const radius = best.outerRadius;
+
+    this._lastBullseyeBandWidth = best.bandWidth;
 
     return {
-      x: refined.x,
-      y: refined.y,
-      score: refined.score,
+      x: best.x,
+      y: best.y,
+      score: best.score,
       confidence,
       radius,
+      bandWidth: best.bandWidth,
+      found,
     };
   }
 
   estimateModulePitch(center) {
     const gray = this.grayscale();
     const threshold = this.options.threshold;
-    const maxRadius = Math.min(this.width, this.height) * 0.3;
+    const maxRadius = center?.radius
+      ? Math.min(center.radius * 1.3, Math.min(this.width, this.height) * 0.3)
+      : Math.min(this.width, this.height) * 0.3;
     const angles = 24;
     const transitionDistances = [];
+    const isInk = (value) => (this.options.invert ? value >= threshold : value < threshold);
 
     for (let a = 0; a < angles; a += 1) {
       const angle = (a / angles) * Math.PI * 2;
@@ -842,23 +1008,24 @@ export class MaxiCodeScanner {
       }
 
       const transitions = [];
-      let prev = samples[0] < threshold;
+      let prev = isInk(samples[0]);
       for (let r = 1; r < samples.length; r += 1) {
-        const current = samples[r] < threshold;
+        const current = isInk(samples[r]);
         if (current !== prev) transitions.push(r);
         prev = current;
       }
 
       if (transitions.length >= 4) {
         const gaps = [];
-        for (let i = 1; i < Math.min(transitions.length, 6); i += 1) {
+        for (let i = 1; i < Math.min(transitions.length, 5); i += 1) {
           gaps.push(transitions[i] - transitions[i - 1]);
         }
         if (gaps.length) transitionDistances.push(median(gaps));
       }
     }
 
-    const pitch = clamp(median(transitionDistances) || Math.min(this.width, this.height) / 54, 7, 34);
+    const pitchGuess = median(transitionDistances) || this._lastBullseyeBandWidth || Math.min(this.width, this.height) / 54;
+    const pitch = clamp(pitchGuess, 2, Math.min(this.width, this.height) / 8);
     this._lastCenter = center;
     this._lastPitch = pitch;
     return pitch;
@@ -887,13 +1054,8 @@ export class MaxiCodeScanner {
 
   decode(cells) {
     const mask = this.binarize();
-    const candidateRects = [];
+    const candidateRects = [null];
     let decodeFailure = null;
-
-    if (cells && cells.length) {
-      // Keep a heuristic fallback for legacy callers that already sampled hex cells.
-      candidateRects.push(null);
-    }
 
     const center = this._lastCenter || null;
     const pitch = this._lastPitch || null;

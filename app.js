@@ -129,11 +129,11 @@ function drawFrame(analysis = null) {
   previewCtx.lineWidth = 1;
   previewCtx.strokeRect(frame.x, frame.y, frame.width, frame.height);
 
-  if (analysis?.center) {
+  if (analysis?.center && analysis.center.found !== false) {
     const { x, y } = analysis.center;
     const cx = frame.x + x * frame.scale;
     const cy = frame.y + y * frame.scale;
-    const radius = Math.max(12, analysis.pitch * frame.scale * 2.3);
+    const radius = Math.max(12, (analysis.center.radius || analysis.pitch * 5) * frame.scale);
     previewCtx.save();
     previewCtx.strokeStyle = analysis.decode?.decoded ? "rgba(97, 210, 255, 0.9)" : "rgba(247, 190, 85, 0.88)";
     previewCtx.lineWidth = 2;
@@ -203,7 +203,9 @@ function updateUIFromAnalysis(analysis) {
   els.sourceLabel.textContent = state.sourceName || `${analysis.sourceWidth} x ${analysis.sourceHeight}`;
   els.decodedText.textContent = analysis.decode?.text || analysis.decode?.error || "No readable payload found.";
   els.modeValue.textContent = analysis.decode?.mode ? `Mode ${analysis.decode.mode}` : analysis.decode?.modeGuess || "-";
-  els.centerValue.textContent = `${analysis.center.x.toFixed(1)}, ${analysis.center.y.toFixed(1)}`;
+  els.centerValue.textContent = analysis.center.found
+    ? `${analysis.center.x.toFixed(1)}, ${analysis.center.y.toFixed(1)}`
+    : "Not found";
   els.pitchValue.textContent = `${analysis.pitch.toFixed(2)} px`;
   els.bytesValue.textContent = analysis.decode?.bytes?.length ? `${analysis.decode.bytes.length}` : "-";
   els.rawBytes.textContent = analysis.decode?.bytes?.length
@@ -213,7 +215,9 @@ function updateUIFromAnalysis(analysis) {
     : "-";
   els.resultNote.textContent = analysis.decode?.decoded
     ? `Decoded locally in the browser. Source: ${analysis.sourceWidth} x ${analysis.sourceHeight}.`
-    : analysis.decode?.error || "Bullseye found, but the payload is not fully readable yet.";
+    : analysis.center.found
+      ? analysis.decode?.error || "Bullseye found, but the payload is not fully readable yet."
+      : "No MaxiCode bullseye found in this frame.";
   els.idleState.hidden = true;
   drawFrame(analysis);
 }
@@ -234,12 +238,12 @@ function scanSource() {
   });
 
   const center = scanner.findBullseye();
-  const pitch = scanner.estimateModulePitch(center);
-  const cells = scanner.sampleHexGrid(center, pitch);
+  const pitch = center.found ? scanner.estimateModulePitch(center) : center.bandWidth || 0;
+  const cells = center.found ? scanner.sampleHexGrid(center, pitch) : [];
   const decode = scanner.decode(cells);
   const confidence = decode.decoded
-    ? 1
-    : clamp(center.confidence * 0.58 + decode.density * 0.34 + 0.08, 0, 1);
+    ? clamp(0.72 + center.confidence * 0.28, 0, 1)
+    : clamp(center.confidence * 0.72 + decode.density * 0.2, 0, 1);
 
   const analysis = {
     center,
