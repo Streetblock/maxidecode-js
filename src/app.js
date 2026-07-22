@@ -471,7 +471,7 @@ function setResultExpanded(expanded) {
   els.resultPanel.classList.toggle("is-expanded", expanded);
   document.body.classList.toggle("is-result-expanded", expanded);
   els.resultToggle.setAttribute("aria-expanded", String(expanded));
-  els.resultToggle.textContent = expanded ? "Close" : "Details";
+  els.resultToggle.textContent = expanded ? "Close" : "View result";
 }
 
 function clearState() {
