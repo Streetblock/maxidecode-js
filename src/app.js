@@ -32,6 +32,8 @@ const state = {
   stream: null,
   cameraActive: false,
   scanTimer: null,
+  phase: "idle",
+  captureInFlight: false,
   sourceName: "",
   sourceKind: "idle",
   analysis: null,
@@ -211,7 +213,9 @@ function updateUIFromAnalysis(analysis) {
   const confidencePct = Math.round((analysis.confidence ?? 0) * 1000) / 10;
   const statusKind = analysis.decode?.decoded ? "live" : confidencePct >= 65 ? "warn" : "bad";
   const pillText = analysis.decode?.decoded ? "Decoded" : "Analyzed";
-  const statusText = analysis.decode?.decoded ? "Decoded" : state.cameraActive ? "Camera live" : pillText;
+  const statusText = analysis.decode?.decoded
+    ? state.phase === "decoded" ? "Decoded · paused" : "Decoded"
+    : state.cameraActive ? "Camera live" : pillText;
 
   setStatus(statusKind, statusText);
   setResultPill(statusKind, pillText);
@@ -233,7 +237,9 @@ function updateUIFromAnalysis(analysis) {
         .join("  ")
     : "-";
   els.resultNote.textContent = analysis.decode?.decoded
-    ? `Decoded locally in the browser. Source: ${analysis.sourceWidth} x ${analysis.sourceHeight}.`
+    ? state.phase === "decoded" && analysis.sourceKind === "camera"
+      ? `Decoded locally. The successful camera frame is frozen (${analysis.sourceWidth} x ${analysis.sourceHeight}).`
+      : `Decoded locally in the browser. Source: ${analysis.sourceWidth} x ${analysis.sourceHeight}.`
     : analysis.center.found
       ? analysis.decode?.error || "Bullseye found, but the payload is not fully readable yet."
       : "No MaxiCode bullseye found in this frame.";
@@ -277,6 +283,9 @@ function scanSource() {
   };
 
   state.analysis = analysis;
+  if (decode.decoded && state.phase !== "decoded") {
+    lockSuccessfulDecode();
+  }
   updateUIFromAnalysis(analysis);
   return analysis;
 }
@@ -284,6 +293,7 @@ function scanSource() {
 async function loadFile(file) {
   if (!file) return;
   stopCamera();
+  state.phase = "analyzing";
   state.sourceKind = "image";
   state.sourceName = file.name || "Loaded image";
 
@@ -357,6 +367,7 @@ async function startCamera() {
   }
 
   stopCamera();
+  state.phase = "starting";
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -368,39 +379,62 @@ async function startCamera() {
 
     state.stream = stream;
     state.cameraActive = true;
+    state.phase = "scanning";
     state.sourceKind = "camera";
     state.sourceName = "Live camera";
     els.cameraVideo.srcObject = stream;
     await els.cameraVideo.play();
 
     await captureCameraFrame();
-    state.scanTimer = window.setInterval(() => {
-      captureCameraFrame().catch(() => {});
-    }, 550);
+    if (state.phase === "scanning") {
+      state.scanTimer = window.setInterval(() => {
+        if (!state.captureInFlight && state.phase === "scanning") {
+          captureCameraFrame().catch(() => {});
+        }
+      }, 550);
+    }
     updateCameraButton();
   } catch (error) {
+    state.phase = "error";
+    stopCamera({ keepPhase: true });
     setStatus("bad", "Camera blocked");
     els.resultNote.textContent = error?.message || "Could not open the camera.";
   }
 }
 
 async function captureCameraFrame() {
-  if (!state.cameraActive || !els.cameraVideo.videoWidth || !els.cameraVideo.videoHeight) {
+  if (
+    !state.cameraActive
+    || state.phase !== "scanning"
+    || state.captureInFlight
+    || !els.cameraVideo.videoWidth
+    || !els.cameraVideo.videoHeight
+  ) {
     return;
   }
 
-  const maxScanDimension = 960;
-  const cameraScale = Math.min(
-    1,
-    maxScanDimension / Math.max(els.cameraVideo.videoWidth, els.cameraVideo.videoHeight),
-  );
-  els.sourceCanvas.width = Math.max(1, Math.round(els.cameraVideo.videoWidth * cameraScale));
-  els.sourceCanvas.height = Math.max(1, Math.round(els.cameraVideo.videoHeight * cameraScale));
-  sourceCtx.drawImage(els.cameraVideo, 0, 0, els.sourceCanvas.width, els.sourceCanvas.height);
-  scanSource();
+  state.captureInFlight = true;
+  try {
+    const maxScanDimension = 960;
+    const cameraScale = Math.min(
+      1,
+      maxScanDimension / Math.max(els.cameraVideo.videoWidth, els.cameraVideo.videoHeight),
+    );
+    els.sourceCanvas.width = Math.max(1, Math.round(els.cameraVideo.videoWidth * cameraScale));
+    els.sourceCanvas.height = Math.max(1, Math.round(els.cameraVideo.videoHeight * cameraScale));
+    sourceCtx.drawImage(els.cameraVideo, 0, 0, els.sourceCanvas.width, els.sourceCanvas.height);
+    scanSource();
+  } finally {
+    state.captureInFlight = false;
+  }
 }
 
-function stopCamera() {
+function lockSuccessfulDecode() {
+  state.phase = "decoded";
+  stopCamera({ keepPhase: true });
+}
+
+function stopCamera({ keepPhase = false } = {}) {
   if (state.scanTimer) {
     window.clearInterval(state.scanTimer);
     state.scanTimer = null;
@@ -412,13 +446,20 @@ function stopCamera() {
   }
   state.stream = null;
   state.cameraActive = false;
+  els.cameraVideo.pause();
   els.cameraVideo.srcObject = null;
+  if (!keepPhase && state.phase === "scanning") {
+    state.phase = "stopped";
+  }
   updateCameraButton();
 }
 
 function updateCameraButton() {
-  els.cameraBtnLabel.textContent = state.cameraActive ? "Stop" : "Camera";
+  els.cameraBtnLabel.textContent = state.cameraActive
+    ? "Stop"
+    : state.phase === "decoded" && state.sourceKind === "camera" ? "Scan again" : "Camera";
   document.body.classList.toggle("is-camera-active", state.cameraActive);
+  document.body.classList.toggle("is-scan-complete", state.phase === "decoded");
 }
 
 function setResultExpanded(expanded) {
@@ -430,6 +471,8 @@ function setResultExpanded(expanded) {
 
 function clearState() {
   stopCamera();
+  state.phase = "idle";
+  state.captureInFlight = false;
   state.sourceKind = "idle";
   state.sourceName = "";
   state.analysis = null;
@@ -487,6 +530,7 @@ function wireEvents() {
       drawFrame(state.analysis);
       return;
     }
+    state.phase = "idle";
     await startCamera();
   });
 
