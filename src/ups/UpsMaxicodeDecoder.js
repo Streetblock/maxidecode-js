@@ -1,3 +1,5 @@
+import { FORMAT_07_DICTIONARY } from "./format07Dictionary.js";
+
 /**
  * Decoder core for the compressed UPS MaxiCode "07" format.
  *
@@ -23,82 +25,14 @@ export class UpsMaxicodeDecoder {
   static FORMAT_07_ALPHABET =
     "\rABCDEFGHIJKLMNOPQRSTUVWXYZ\x1c\x1d \"#$%&'()*+,-./0123456789:";
 
-  /**
-   * Representative, exactly transcribed subset of figs. 4A-4H.
-   *
-   * Each bit string is the low `bitLength` bits of the 32-bit binary value
-   * printed in the patent table (most-significant digit shown first). Fig. 4
-   * has no column headings and the prose never defines how these integers and
-   * the two trailing columns are serialized. They are therefore retained as
-   * reference data, not misrepresented as a directly decodable prefix code.
-   *
-   * Important: fig. 4A assigns separate Huffman codes to "00", "01", etc.
-   * They are tokens, not two decimal digits packed into one binary byte.
-   */
-  static CORE_DICTIONARY = Object.freeze([
-    // Control and punctuation (fig. 4A)
-    { token: "\x1d", bits: "110", figure: "4A" },
-    { token: " ", bits: "01", figure: "4A" },
-    { token: "#", bits: "00000000", figure: "4A" },
-    { token: "&", bits: "100010000", figure: "4A" },
-    { token: "-", bits: "00100111", figure: "4A" },
-    { token: ".", bits: "001010", figure: "4A" },
-    { token: "/", bits: "1001100111", figure: "4A" },
-
-    // Numeric pair tokens (fig. 4A).  These expand directly to two digits.
-    { token: "00", bits: "11100000", figure: "4A" },
-    { token: "01", bits: "00000110", figure: "4A" },
-    { token: "02", bits: "1011011111", figure: "4A" },
-    { token: "03", bits: "1000000001", figure: "4A" },
-    { token: "04", bits: "0010111110", figure: "4A" },
-    { token: "05", bits: "1110110011", figure: "4A" },
-    { token: "06", bits: "0001111101", figure: "4A" },
-    { token: "07", bits: "0000110010", figure: "4A" },
-    { token: "08", bits: "0001000110", figure: "4A" },
-    { token: "09", bits: "0010110100", figure: "4A" },
-    { token: "10", bits: "10001011", figure: "4A" },
-    { token: "11", bits: "111011000", figure: "4A" },
-    { token: "12", bits: "101100011", figure: "4A" },
-    { token: "13", bits: "001101100", figure: "4A" },
-    { token: "14", bits: "001011110", figure: "4A" },
-    { token: "15", bits: "100111010", figure: "4A" },
-    { token: "16", bits: "000000110", figure: "4A" },
-    { token: "17", bits: "000100010", figure: "4A" },
-    { token: "18", bits: "1011100110", figure: "4A" },
-    { token: "19", bits: "1110000110", figure: "4A" },
-
-    // Common address tokens (figs. 4C, 4F and 4G)
-    { token: "A", bits: "111111", figure: "4C" },
-    { token: "AI", bits: "011101100", figure: "4C" },
-    { token: "ALL", bits: "1010011000", figure: "4C" },
-    { token: "AN", bits: "0111100", figure: "4C" },
-    { token: "AND", bits: "1010011010", figure: "4C" },
-    { token: "ANY", bits: "10110001001", figure: "4C" },
-    { token: "APT", bits: "101100010001", figure: "4C" },
-    { token: "AR", bits: "1010111", figure: "4C" },
-    { token: "AT", bits: "10110100", figure: "4C" },
-    { token: "AVE", bits: "10110010", figure: "4C" },
-    { token: "B", bits: "1111001", figure: "4C" },
-    { token: "BL", bits: "0011100101", figure: "4C" },
-    { token: "BLVD", bits: "000000011", figure: "4C" },
-    { token: "BOX", bits: "1000001000", figure: "4C" },
-    { token: "C", bits: "100001", figure: "4C" },
-    { token: "CE", bits: "00101100", figure: "4C" },
-    { token: "CITY", bits: "001101111011", figure: "4C" },
-    { token: "CO", bits: "1000100", figure: "4C" },
-    { token: "CORP", bits: "0100011111", figure: "4C" },
-    { token: "RD", bits: "11110111", figure: "4F" },
-    { token: "ST", bits: "11111001", figure: "4G" },
-    { token: "STA", bits: "1010010110", figure: "4G" },
-    { token: "STE", bits: "010011011", figure: "4G" },
-    { token: "STR", bits: "00110001", figure: "4G" }
-  ]);
+  /** Complete active substitution table from patent figs. 4A-4H. */
+  static FORMAT_07_DICTIONARY = FORMAT_07_DICTIONARY;
 
   constructor({ transportDecoder = null, substitutionDecoder = null, dictionary = [] } = {}) {
     this.transportDecoder = transportDecoder ?? UpsMaxicodeDecoder.decodeTransport;
     this.substitutionDecoder = substitutionDecoder;
     this.dictionary = Object.freeze([
-      ...UpsMaxicodeDecoder.CORE_DICTIONARY,
+      ...UpsMaxicodeDecoder.FORMAT_07_DICTIONARY,
       ...dictionary
     ]);
   }
