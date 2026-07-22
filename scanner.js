@@ -143,19 +143,32 @@ function canonicalModulePosition(x, y) {
   };
 }
 
-function orientedImagePosition(center, modulePitch, angle, x, y, verticalScale = 1) {
+function orientedImagePosition(
+  center,
+  modulePitch,
+  angle,
+  x,
+  y,
+  verticalScale = 1,
+  perspectiveX = 0,
+  perspectiveY = 0,
+  shear = 0,
+) {
   const canonical = canonicalModulePosition(x, y);
   const dx = canonical.x * modulePitch;
   const dy = canonical.y * modulePitch * verticalScale;
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
+  const verticalAngle = angle + Math.PI / 2 + shear;
+  const denominator = Math.max(0.55, 1 + canonical.x * perspectiveX + canonical.y * perspectiveY);
   return {
-    x: center.x + dx * cos - dy * sin,
-    y: center.y + dx * sin + dy * cos,
+    x: center.x + (dx * cos + dy * Math.cos(verticalAngle)) / denominator,
+    y: center.y + (dx * sin + dy * Math.sin(verticalAngle)) / denominator,
   };
 }
 
 function sampleMaskVote(mask, width, height, x, y, radius) {
+  if (radius < 0.75) return sampleMask(mask, width, height, x, y);
   let black = 0;
   let samples = 0;
   const step = Math.max(1, radius);
@@ -183,17 +196,156 @@ function scoreOrientation(mask, width, height, center, modulePitch, angle, verti
   return valid === MAXICODE_ORIENTATION_MODULES.length ? matches / valid : 0;
 }
 
-function sampleOrientedBitMatrix(mask, width, height, center, modulePitch, angle, verticalScale = 1) {
+function sampleOrientedBitMatrix(
+  mask,
+  width,
+  height,
+  center,
+  modulePitch,
+  angle,
+  verticalScale = 1,
+  perspectiveX = 0,
+  perspectiveY = 0,
+  shear = 0,
+) {
   const bits = createBitMatrix(MAXICODE_WIDTH, MAXICODE_HEIGHT);
   const sampleRadius = Math.max(0.5, modulePitch * 0.1);
   for (let y = 0; y < MAXICODE_HEIGHT; y += 1) {
     for (let x = 0; x < MAXICODE_WIDTH; x += 1) {
-      const point = orientedImagePosition(center, modulePitch, angle, x, y, verticalScale);
+      const point = orientedImagePosition(
+        center,
+        modulePitch,
+        angle,
+        x,
+        y,
+        verticalScale,
+        perspectiveX,
+        perspectiveY,
+        shear,
+      );
       if (point.x < 0 || point.y < 0 || point.x >= width || point.y >= height) continue;
       if (sampleMaskVote(mask, width, height, point.x, point.y, sampleRadius)) bits.set(x, y);
     }
   }
   return bits;
+}
+
+function sampleOrientedCodewords(
+  mask,
+  width,
+  height,
+  center,
+  transform,
+  maxBit = 863,
+) {
+  const result = new Uint8Array(144);
+  const sampleRadius = Math.max(0.5, transform.modulePitch * 0.1);
+  for (let y = 0; y < MAXICODE_HEIGHT; y += 1) {
+    for (let x = 0; x < MAXICODE_WIDTH; x += 1) {
+      const bit = MAXICODE_BITNR[y][x];
+      if (bit < 0 || bit > maxBit) continue;
+      const point = orientedImagePosition(
+        center,
+        transform.modulePitch,
+        transform.angle,
+        x,
+        y,
+        transform.verticalScale,
+        transform.perspectiveX || 0,
+        transform.perspectiveY || 0,
+        transform.shear || 0,
+      );
+      if (point.x < 0 || point.y < 0 || point.x >= width || point.y >= height) continue;
+      if (sampleMaskVote(mask, width, height, point.x, point.y, sampleRadius)) {
+        result[Math.floor(bit / 6)] |= 1 << (5 - (bit % 6));
+      }
+    }
+  }
+  return result;
+}
+
+function scoreOrientedGridContrast(gray, width, height, center, transform, threshold) {
+  const dark = [];
+  const light = [];
+  for (let y = 0; y < MAXICODE_HEIGHT; y += 1) {
+    for (let x = 0; x < MAXICODE_WIDTH; x += 1) {
+      if (MAXICODE_BITNR[y][x] < 0) continue;
+      const point = orientedImagePosition(
+        center,
+        transform.modulePitch,
+        transform.angle,
+        x,
+        y,
+        transform.verticalScale,
+        transform.perspectiveX || 0,
+        transform.perspectiveY || 0,
+        transform.shear || 0,
+      );
+      if (point.x < 0 || point.y < 0 || point.x >= width || point.y >= height) return -Infinity;
+      const value = sampleGray(gray, width, height, point.x, point.y);
+      (value < threshold ? dark : light).push(value);
+    }
+  }
+  const density = dark.length / Math.max(dark.length + light.length, 1);
+  if (!dark.length || !light.length || density < 0.25 || density > 0.62) return -Infinity;
+  const separation = mean(light) - mean(dark);
+  const spread = standardDeviation(dark) + standardDeviation(light);
+  return separation - spread * 0.22 - Math.abs(density - 0.42) * 90;
+}
+
+function refineGridTransform(mask, gray, width, height, center, transform, threshold) {
+  let best = {
+    center: { ...center },
+    transform: {
+      ...transform,
+      perspectiveX: transform.perspectiveX || 0,
+      perspectiveY: transform.perspectiveY || 0,
+      shear: transform.shear || 0,
+    },
+  };
+  const scoreCandidate = (candidate) => {
+    const primary = sampleOrientedCodewords(
+      mask,
+      width,
+      height,
+      candidate.center,
+      candidate.transform,
+      119,
+    );
+    if (!canDecodeMaxiCodePrimary(primary)) return -Infinity;
+    return scoreOrientedGridContrast(gray, width, height, candidate.center, candidate.transform, threshold);
+  };
+  best.score = scoreCandidate(best);
+
+  let steps = {
+    centerX: Math.max(0.35, transform.modulePitch * 0.18),
+    centerY: Math.max(0.35, transform.modulePitch * 0.18),
+    modulePitch: transform.modulePitch * 0.045,
+    angle: 1.5 * Math.PI / 180,
+    verticalScale: 0.055,
+    shear: 2.5 * Math.PI / 180,
+    perspectiveX: 0.0035,
+    perspectiveY: 0.0035,
+  };
+
+  const parameters = Object.keys(steps);
+  for (let iteration = 0; iteration < 5; iteration += 1) {
+    for (const parameter of parameters) {
+      for (const direction of [-1, 1]) {
+        const candidate = {
+          center: { ...best.center },
+          transform: { ...best.transform },
+        };
+        if (parameter === "centerX") candidate.center.x += steps[parameter] * direction;
+        else if (parameter === "centerY") candidate.center.y += steps[parameter] * direction;
+        else candidate.transform[parameter] += steps[parameter] * direction;
+        const score = scoreCandidate(candidate);
+        if (score > best.score) best = { ...candidate, score };
+      }
+    }
+    steps = Object.fromEntries(Object.entries(steps).map(([key, value]) => [key, value * 0.52]));
+  }
+  return best;
 }
 
 function createBitMatrix(width, height) {
@@ -612,6 +764,17 @@ function getIntFromBytes(bytes, positions) {
     value += getBitFromBytes(positions[i], bytes) << (positions.length - i - 1);
   }
   return value;
+}
+
+function canDecodeMaxiCodePrimary(codewords) {
+  const primary = Array.from(codewords.slice(0, 20), (value) => value & 0x3F);
+  try {
+    new ReedSolomonDecoder(MAXICODE_FIELD_64).decodeWithECCount(primary, 10);
+    const mode = primary[0] & 0x0F;
+    return mode >= 2 && mode <= 5;
+  } catch {
+    return false;
+  }
 }
 
 function decodeMaxiCodeData(codewords) {
@@ -1399,6 +1562,7 @@ export class MaxiCodeScanner {
 
   decode(cells) {
     const mask = this.binarize();
+    const gray = this.grayscale();
     const candidateRects = [];
     let decodeFailure = null;
 
@@ -1458,13 +1622,16 @@ export class MaxiCodeScanner {
               orientation.angle,
               orientation.verticalScale,
             );
-            decoded = decodeMaxiCodeData(readCodewordsFromBitMatrix(pureBits));
+            const codewords = readCodewordsFromBitMatrix(pureBits);
+            if (!canDecodeMaxiCodePrimary(codewords)) throw new Error("Primary checksum");
+            decoded = decodeMaxiCodeData(codewords);
             rotation = ((orientation.angle * 180 / Math.PI) % 360 + 360) % 360;
             orientationScore = orientation.score;
             source = {
               centerX: center.x,
               centerY: center.y,
               modulePitch: orientation.modulePitch,
+              angle: orientation.angle,
               verticalScale: orientation.verticalScale,
             };
             break;
@@ -1472,6 +1639,143 @@ export class MaxiCodeScanner {
             decodeFailure = error;
             decoded = null;
             pureBits = null;
+          }
+        }
+
+        if (!decoded) {
+          const base = orientations[0];
+          const primaryCandidates = [];
+          const pitchScales = [0.9, 0.96, 1.02, 1.08, 1.14];
+          const angleOffsets = [-3, 0, 3];
+          const verticalScales = [0.88, 1, 1.12];
+          const shears = [-6, 0, 6];
+          const centerOffsets = [[0, 0], [-0.22, 0], [0.22, 0], [0, -0.22], [0, 0.22]];
+
+          for (const pitchScale of pitchScales) {
+            for (const angleOffset of angleOffsets) {
+              for (const verticalScale of verticalScales) {
+                for (const shearDegrees of shears) {
+                  for (const [offsetX, offsetY] of centerOffsets) {
+                    const transform = {
+                      modulePitch: base.modulePitch * pitchScale,
+                      angle: base.angle + angleOffset * Math.PI / 180,
+                      verticalScale: base.verticalScale * verticalScale,
+                      shear: shearDegrees * Math.PI / 180,
+                      perspectiveX: 0,
+                      perspectiveY: 0,
+                    };
+                    const adjustedCenter = {
+                      x: center.x + offsetX * transform.modulePitch,
+                      y: center.y + offsetY * transform.modulePitch,
+                    };
+                    const primary = sampleOrientedCodewords(
+                      mask,
+                      this.width,
+                      this.height,
+                      adjustedCenter,
+                      transform,
+                      119,
+                    );
+                    if (canDecodeMaxiCodePrimary(primary)) {
+                      primaryCandidates.push({ center: adjustedCenter, transform });
+                    }
+                  }
+                }
+              }
+            }
+          }
+          const affinePrimaryCandidates = [...primaryCandidates];
+          for (const candidate of affinePrimaryCandidates) {
+            for (const perspectiveX of [-0.006, 0, 0.006]) {
+              for (const perspectiveY of [-0.006, 0, 0.006]) {
+                if (perspectiveX === 0 && perspectiveY === 0) continue;
+                const transform = { ...candidate.transform, perspectiveX, perspectiveY };
+                const primary = sampleOrientedCodewords(
+                  mask,
+                  this.width,
+                  this.height,
+                  candidate.center,
+                  transform,
+                  119,
+                );
+                if (canDecodeMaxiCodePrimary(primary)) {
+                  primaryCandidates.push({ center: candidate.center, transform });
+                }
+              }
+            }
+          }
+          const rankedPrimaryCandidates = primaryCandidates.map((candidate) => ({
+            ...candidate,
+            score: scoreOrientedGridContrast(
+              gray,
+              this.width,
+              this.height,
+              candidate.center,
+              candidate.transform,
+              this.options.threshold,
+            ),
+          })).sort((a, b) => b.score - a.score);
+          const refinedCandidates = [];
+
+          for (const initialCandidate of rankedPrimaryCandidates.slice(0, 8)) {
+            const candidate = refineGridTransform(
+              mask,
+              gray,
+              this.width,
+              this.height,
+              initialCandidate.center,
+              initialCandidate.transform,
+              this.options.threshold,
+            );
+            refinedCandidates.push(candidate);
+            try {
+              const primary = sampleOrientedCodewords(
+                mask,
+                this.width,
+                this.height,
+                candidate.center,
+                candidate.transform,
+                119,
+              );
+              if (!canDecodeMaxiCodePrimary(primary)) continue;
+              const codewords = sampleOrientedCodewords(
+                mask,
+                this.width,
+                this.height,
+                candidate.center,
+                candidate.transform,
+              );
+              decoded = decodeMaxiCodeData(codewords);
+              pureBits = sampleOrientedBitMatrix(
+                mask,
+                this.width,
+                this.height,
+                candidate.center,
+                candidate.transform.modulePitch,
+                candidate.transform.angle,
+                candidate.transform.verticalScale,
+                candidate.transform.perspectiveX,
+                candidate.transform.perspectiveY,
+                candidate.transform.shear,
+              );
+              rotation = ((candidate.transform.angle * 180 / Math.PI) % 360 + 360) % 360;
+              orientationScore = base.score;
+              source = {
+                centerX: candidate.center.x,
+                centerY: candidate.center.y,
+                modulePitch: candidate.transform.modulePitch,
+                angle: candidate.transform.angle,
+                verticalScale: candidate.transform.verticalScale,
+                shear: candidate.transform.shear,
+                perspectiveX: candidate.transform.perspectiveX,
+                perspectiveY: candidate.transform.perspectiveY,
+              };
+              break;
+            } catch (error) {
+              decodeFailure = error;
+              decoded = null;
+              pureBits = null;
+            }
           }
         }
       }
@@ -1495,6 +1799,25 @@ export class MaxiCodeScanner {
       }
 
       if (decoded && pureBits) {
+        if (Number.isFinite(source?.centerX) && Number.isFinite(source?.angle)) {
+          const decodedCenter = { x: source.centerX, y: source.centerY };
+          for (const cell of cells) {
+            const point = orientedImagePosition(
+              decodedCenter,
+              source.modulePitch,
+              source.angle,
+              cell.col,
+              cell.row,
+              source.verticalScale,
+              source.perspectiveX || 0,
+              source.perspectiveY || 0,
+              source.shear || 0,
+            );
+            cell.x = point.x;
+            cell.y = point.y;
+            cell.bit = sampleMask(mask, this.width, this.height, point.x, point.y) ? 1 : 0;
+          }
+        }
         const bits = decoded.rawBytes.map((byte) => byte.toString(2).padStart(8, "0")).join("");
         const density = pureBits.count() / (MAXICODE_WIDTH * MAXICODE_HEIGHT);
         const modeGuess = `Mode ${decoded.mode}`;

@@ -218,8 +218,9 @@ function updateUIFromAnalysis(analysis) {
   els.confidenceValue.textContent = `${confidencePct}% confidence`;
   els.sourceLabel.textContent = state.sourceName || `${analysis.sourceWidth} x ${analysis.sourceHeight}`;
   els.decodedText.textContent = analysis.decode?.text || analysis.decode?.error || "No readable payload found.";
+  const rotation = Math.round((analysis.decode?.rotation || 0) * 10) / 10;
   els.modeValue.textContent = analysis.decode?.mode
-    ? `Mode ${analysis.decode.mode} · ${analysis.decode.rotation || 0}°`
+    ? `Mode ${analysis.decode.mode} · ${rotation}°`
     : analysis.decode?.modeGuess || "-";
   els.centerValue.textContent = analysis.center.found
     ? `${analysis.center.x.toFixed(1)}, ${analysis.center.y.toFixed(1)}`
