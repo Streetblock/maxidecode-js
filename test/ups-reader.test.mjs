@@ -44,6 +44,14 @@ test("reads routing and compressed segments without losing payload controls", ()
     result.compressed.transportHex,
     "1241e993b3c8cf87ee5c5d1fd38293beaa0fe89dfbfcaf25513bed05f0281176",
   );
+  assert.equal(
+    result.compressed.decodedText,
+    `KORSCHENBROICH${GS}  ${GS}JOHANN- GEORG- HALSKE- STRASSE 1${GS}`,
+  );
+  assert.deepEqual(result.compressed.fields.nonEmptySegments, [
+    "KORSCHENBROICH",
+    "JOHANN- GEORG- HALSKE- STRASSE 1",
+  ]);
 });
 
 test("reports a carrier-neutral MaxiCode message as unrecognized", () => {
