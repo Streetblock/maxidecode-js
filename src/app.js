@@ -73,8 +73,25 @@ function updateUpsSummary(ups) {
   els.upsCountry.textContent = ups.primary.countryCode || "-";
   els.upsService.textContent = ups.primary.serviceClass || "-";
   els.upsFormat07.textContent = ups.compressed
-    ? ups.compressed.ok ? "Decoded" : "Transport recovered"
+    ? ups.compressed.ok
+      ? ups.compressed.decoder.complete ? "Decoded" : "Decoded (partial)"
+      : "Transport recovered"
     : "Not present";
+}
+
+function formatUpsResult(ups) {
+  if (!ups.compressed) {
+    return "UPS routing fields decoded. No Format 07 segment is present.";
+  }
+  if (!ups.compressed.ok) {
+    return "UPS routing fields decoded. Format 07 transport recovered, but its substitutions could not be expanded.";
+  }
+
+  const lines = ups.compressed.fields.nonEmptySegments;
+  const suffix = ups.compressed.decoder.complete
+    ? ""
+    : "\n\nPartial result: the final compressed bits do not form another complete token.";
+  return `UPS Format 07\n${lines.join("\n")}${suffix}`;
 }
 
 function fitContain(sourceWidth, sourceHeight, targetWidth, targetHeight) {
@@ -259,9 +276,7 @@ function updateUIFromAnalysis(analysis) {
   els.sourceLabel.textContent = state.sourceName || `${analysis.sourceWidth} x ${analysis.sourceHeight}`;
   updateUpsSummary(analysis.ups);
   if (analysis.ups?.recognized) {
-    els.decodedText.textContent = analysis.ups.compressed
-      ? "UPS routing fields decoded. Format 07 transport recovered; address substitution is still pending verification."
-      : "UPS routing fields decoded. No Format 07 segment is present.";
+    els.decodedText.textContent = formatUpsResult(analysis.ups);
   } else {
     els.decodedText.textContent = analysis.decode?.text || analysis.decode?.error || "No readable payload found.";
   }
