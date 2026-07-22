@@ -66,3 +66,45 @@ test("does not fabricate a tracking number from incomplete routing data", () => 
     null,
   );
 });
+
+test("parses the documented uncompressed UPS detail fields", () => {
+  // Field order from the UPS MaxiCode example in the Avery 9433 printer manual.
+  const uncompressedRouting = [
+    "01",
+    "96450660000",
+    "840",
+    "001",
+    "1Z12345678",
+    "UPSN",
+    "12345A",
+    "070",
+    "",
+    "1/1",
+    "15",
+    "Y",
+    "60 SADDLEBROOK CT.",
+    "DAYTON",
+    "OH",
+  ].join(GS);
+  const result = new UpsMaxicodeReader().read(`[)>${RS}${uncompressedRouting}${RS}${EOT}`);
+
+  assert.equal(result.recognized, true);
+  assert.equal(result.structuredCarrierMessageVersion, "96");
+  assert.deepEqual(result.primary, {
+    postalCode: "450660000",
+    countryCode: "840",
+    serviceClass: "001",
+  });
+  assert.equal(result.secondary.trackingNumberEncoded, "1Z12345678");
+  assert.equal(result.secondary.trackingNumberReconstructed, "1Z12345A0112345678");
+  assert.equal(result.secondary.julianDayOfPickup, "070");
+  assert.equal(result.secondary.shipmentId, null);
+  assert.equal(result.secondary.packageInShipment, "1/1");
+  assert.equal(result.secondary.weightPounds, "15");
+  assert.equal(result.secondary.addressValidation, "Y");
+  assert.equal(result.secondary.shipToStreet, "60 SADDLEBROOK CT.");
+  assert.equal(result.secondary.shipToCity, "DAYTON");
+  assert.equal(result.secondary.shipToState, "OH");
+  assert.deepEqual(result.secondary.unknownFields, []);
+  assert.equal(result.compressed, null);
+});
