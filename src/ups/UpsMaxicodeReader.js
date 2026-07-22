@@ -35,7 +35,7 @@ export class UpsMaxicodeReader {
         recognized: false,
         standardEnvelope: hasStructuredHeader,
         reason: "No UPS 01 routing segment found.",
-        structuredCarrierMessageVersion: null,
+        format01Header: null,
         primary: null,
         secondary: null,
         compressed: null,
@@ -47,7 +47,7 @@ export class UpsMaxicodeReader {
       recognized: true,
       standardEnvelope: hasStructuredHeader,
       format: "01",
-      structuredCarrierMessageVersion: routing.structuredCarrierMessageVersion,
+      format01Header: routing.format01Header,
       primary: routing.primary,
       secondary: routing.secondary,
       compressed: compressedSegment ? this.format07Decoder.decode(compressedSegment) : null,
@@ -71,9 +71,9 @@ export class UpsMaxicodeReader {
       .replaceAll(UpsMaxicodeReader.EOT, "")
       .replace(new RegExp(`${UpsMaxicodeReader.RS}$`), "");
     const values = secondary.slice(3).split(UpsMaxicodeReader.GS);
-    const versionAndTracking = values.shift() || "";
-    const versionMatch = /^(\d{2})(1Z[A-Z0-9]{8})$/i.exec(versionAndTracking);
-    if (!versionMatch) return null;
+    const headerAndTracking = values.shift() || "";
+    const headerMatch = /^(96)(1Z[A-Z0-9]{8})$/i.exec(headerAndTracking);
+    if (!headerMatch) return null;
 
     const [
       scac = "",
@@ -102,10 +102,10 @@ export class UpsMaxicodeReader {
       standardEnvelope: false,
       format: "01",
       variant: "headerless-mode3-with-mispacked-primary",
-      structuredCarrierMessageVersion: versionMatch[1],
+      format01Header: headerMatch[1],
       primary,
       secondary: {
-        trackingNumberEncoded: versionMatch[2].toUpperCase(),
+        trackingNumberEncoded: headerMatch[2].toUpperCase(),
         scac,
         shipperId,
         trackingNumberReconstructed: null,
@@ -178,9 +178,15 @@ export class UpsMaxicodeReader {
       shipToState = "",
       ...unknownFields
     ] = values;
-    const postalMatch = /^(\d{2})(.*)$/s.exec(postalField);
-    const structuredCarrierMessageVersion = postalMatch?.[1] ?? null;
-    const postalCode = (postalMatch?.[2] ?? postalField).trimEnd();
+    // Patent US7039496B2, Fig. 2: the five-byte Format 01 header is
+    // `01<GS>96`. Consequently, `96` is a fixed header literal and not a
+    // structured-carrier-message version. The postal code starts after it.
+    const headerMatch = /^(96)(.*)$/s.exec(postalField);
+    if (!headerMatch) {
+      throw new Error("UPS Format 01 routing data must contain the fixed 01<GS>96 header.");
+    }
+    const format01Header = headerMatch[1];
+    const postalCode = headerMatch[2].trimEnd();
     const trackingNumberReconstructed = this.reconstructTrackingNumber({
       trackingFragment: trackingNumberEncoded,
       shipperId,
@@ -188,7 +194,7 @@ export class UpsMaxicodeReader {
     });
 
     return {
-      structuredCarrierMessageVersion,
+      format01Header,
       primary: {
         postalCode,
         countryCode,

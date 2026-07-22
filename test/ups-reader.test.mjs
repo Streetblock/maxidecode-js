@@ -23,7 +23,7 @@ test("reads routing and compressed segments without losing payload controls", ()
   assert.equal(result.recognized, true);
   assert.equal(result.standardEnvelope, true);
   assert.equal(result.format, "01");
-  assert.equal(result.structuredCarrierMessageVersion, "96");
+  assert.equal(result.format01Header, "96");
   assert.equal(result.primary.postalCode, "41352");
   assert.equal(result.primary.countryCode, "276");
   assert.equal(result.primary.serviceClass, "068");
@@ -58,8 +58,18 @@ test("reports a carrier-neutral MaxiCode message as unrecognized", () => {
   const result = new UpsMaxicodeReader().read("plain MaxiCode data");
 
   assert.equal(result.recognized, false);
+  assert.equal(result.format01Header, null);
   assert.equal(result.primary, null);
   assert.equal(result.secondary, null);
+});
+
+test("requires the fixed 96 literal in the Format 01 header", () => {
+  const invalidRouting = ["01", "9541352", "276", "068"].join(GS);
+
+  assert.throws(
+    () => new UpsMaxicodeReader().read(`[)>${RS}${invalidRouting}${RS}${EOT}`),
+    /fixed 01<GS>96 header/,
+  );
 });
 
 test("does not fabricate a tracking number from incomplete routing data", () => {
@@ -97,7 +107,7 @@ test("parses the documented uncompressed UPS detail fields", () => {
   const result = new UpsMaxicodeReader().read(`[)>${RS}${uncompressedRouting}${RS}${EOT}`);
 
   assert.equal(result.recognized, true);
-  assert.equal(result.structuredCarrierMessageVersion, "96");
+  assert.equal(result.format01Header, "96");
   assert.deepEqual(result.primary, {
     postalCode: "450660000",
     countryCode: "840",
@@ -142,7 +152,7 @@ test("parses the IDAutomation uncompressed UPS golden message", () => {
   assert.equal(result.recognized, true);
   assert.equal(result.standardEnvelope, true);
   assert.equal(result.format, "01");
-  assert.equal(result.structuredCarrierMessageVersion, "96");
+  assert.equal(result.format01Header, "96");
   assert.deepEqual(result.primary, {
     postalCode: "336091062",
     countryCode: "840",
@@ -192,7 +202,7 @@ test("recovers the headerless, mispacked Mode 3 message from label 66034", () =>
   assert.equal(result.recognized, true);
   assert.equal(result.standardEnvelope, false);
   assert.equal(result.variant, "headerless-mode3-with-mispacked-primary");
-  assert.equal(result.structuredCarrierMessageVersion, "96");
+  assert.equal(result.format01Header, "96");
   assert.deepEqual(result.primary, {
     postalCode: "41352",
     countryCode: "276",
