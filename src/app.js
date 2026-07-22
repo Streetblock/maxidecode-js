@@ -66,10 +66,12 @@ function updateUpsSummary(ups) {
   els.upsSummary.hidden = !recognized;
   if (!recognized) return;
 
-  els.upsTracking.textContent = ups.routing.trackingNumber || "Not available";
-  els.upsPostal.textContent = ups.routing.postalCode || "-";
-  els.upsCountry.textContent = ups.routing.countryCode || "-";
-  els.upsService.textContent = ups.routing.serviceClass || "-";
+  els.upsTracking.textContent = ups.secondary.trackingNumberReconstructed
+    || ups.secondary.trackingNumberEncoded
+    || "Not available";
+  els.upsPostal.textContent = ups.primary.postalCode || "-";
+  els.upsCountry.textContent = ups.primary.countryCode || "-";
+  els.upsService.textContent = ups.primary.serviceClass || "-";
   els.upsFormat07.textContent = ups.compressed
     ? ups.compressed.ok ? "Decoded" : "Transport recovered"
     : "Not present";
