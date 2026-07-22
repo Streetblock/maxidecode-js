@@ -278,9 +278,17 @@ function updateUIFromAnalysis(analysis) {
   els.sourceLabel.textContent = state.sourceName || `${analysis.sourceWidth} x ${analysis.sourceHeight}`;
   updateUpsSummary(analysis.ups);
   if (analysis.ups?.recognized) {
-    els.decodedText.textContent = formatUpsResult(analysis.ups);
+    els.decodedText.textContent = [
+      "Raw MaxiCode message",
+      visibleControls(analysis.decode.text),
+      "",
+      "UPS interpretation",
+      formatUpsResult(analysis.ups),
+    ].join("\n");
   } else {
-    els.decodedText.textContent = analysis.decode?.text || analysis.decode?.error || "No readable payload found.";
+    els.decodedText.textContent = analysis.decode?.text
+      ? visibleControls(analysis.decode.text)
+      : analysis.decode?.error || "No readable payload found.";
   }
   els.rawMessage.textContent = analysis.decode?.text ? visibleControls(analysis.decode.text) : "-";
   const rotation = Math.round((analysis.decode?.rotation || 0) * 10) / 10;
