@@ -124,6 +124,78 @@ const MAXICODE_BITNR = [
   [737, 736, 743, 742, 749, 748, 755, 754, 761, 760, 767, 766, 773, 772, 779, 778, 785, 784, 791, 790, 797, 796, 803, 802, 809, 808, 815, 814, 863, 862],
 ];
 
+// ZXing leaves fixed modules out of the payload map. In that map -2 denotes
+// black orientation modules and -1 denotes their white counter-pattern.
+const MAXICODE_ORIENTATION_MODULES = [];
+for (let y = 0; y < MAXICODE_HEIGHT; y += 1) {
+  for (let x = 0; x < MAXICODE_WIDTH; x += 1) {
+    const marker = MAXICODE_BITNR[y][x];
+    if (marker === -2 || marker === -1) {
+      MAXICODE_ORIENTATION_MODULES.push({ x, y, bit: marker === -2 ? 1 : 0 });
+    }
+  }
+}
+
+function canonicalModulePosition(x, y) {
+  return {
+    x: x + 0.5 + (y & 1) * 0.5 - 14.5,
+    y: (y - 16) * 0.8660254037844386,
+  };
+}
+
+function orientedImagePosition(center, modulePitch, angle, x, y, verticalScale = 1) {
+  const canonical = canonicalModulePosition(x, y);
+  const dx = canonical.x * modulePitch;
+  const dy = canonical.y * modulePitch * verticalScale;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return {
+    x: center.x + dx * cos - dy * sin,
+    y: center.y + dx * sin + dy * cos,
+  };
+}
+
+function sampleMaskVote(mask, width, height, x, y, radius) {
+  let black = 0;
+  let samples = 0;
+  const step = Math.max(1, radius);
+  for (const oy of [-step, 0, step]) {
+    for (const ox of [-step, 0, step]) {
+      black += sampleMask(mask, width, height, x + ox, y + oy);
+      samples += 1;
+    }
+  }
+  return black >= Math.ceil(samples / 2) ? 1 : 0;
+}
+
+function scoreOrientation(mask, width, height, center, modulePitch, angle, verticalScale = 1) {
+  let matches = 0;
+  let valid = 0;
+  const sampleRadius = Math.max(0.6, modulePitch * 0.12);
+
+  for (const marker of MAXICODE_ORIENTATION_MODULES) {
+    const point = orientedImagePosition(center, modulePitch, angle, marker.x, marker.y, verticalScale);
+    if (point.x < 1 || point.y < 1 || point.x >= width - 1 || point.y >= height - 1) continue;
+    matches += sampleMaskVote(mask, width, height, point.x, point.y, sampleRadius) === marker.bit ? 1 : 0;
+    valid += 1;
+  }
+
+  return valid === MAXICODE_ORIENTATION_MODULES.length ? matches / valid : 0;
+}
+
+function sampleOrientedBitMatrix(mask, width, height, center, modulePitch, angle, verticalScale = 1) {
+  const bits = createBitMatrix(MAXICODE_WIDTH, MAXICODE_HEIGHT);
+  const sampleRadius = Math.max(0.5, modulePitch * 0.1);
+  for (let y = 0; y < MAXICODE_HEIGHT; y += 1) {
+    for (let x = 0; x < MAXICODE_WIDTH; x += 1) {
+      const point = orientedImagePosition(center, modulePitch, angle, x, y, verticalScale);
+      if (point.x < 0 || point.y < 0 || point.x >= width || point.y >= height) continue;
+      if (sampleMaskVote(mask, width, height, point.x, point.y, sampleRadius)) bits.set(x, y);
+    }
+  }
+  return bits;
+}
+
 function createBitMatrix(width, height) {
   const bits = new Uint8Array(width * height);
   return {
@@ -188,6 +260,62 @@ function extractPureBitsFromRect(mask, width, height, left, top, rectWidth, rect
   }
 
   return bits;
+}
+
+function cropMask(mask, width, height, left, top, rectWidth, rectHeight) {
+  const cropLeft = clamp(Math.round(left), 0, width - 1);
+  const cropTop = clamp(Math.round(top), 0, height - 1);
+  const cropRight = clamp(Math.round(left + rectWidth), cropLeft + 1, width);
+  const cropBottom = clamp(Math.round(top + rectHeight), cropTop + 1, height);
+  const cropWidth = cropRight - cropLeft;
+  const cropHeight = cropBottom - cropTop;
+  const cropped = new Uint8Array(cropWidth * cropHeight);
+
+  for (let y = 0; y < cropHeight; y += 1) {
+    const sourceStart = (cropTop + y) * width + cropLeft;
+    cropped.set(mask.subarray(sourceStart, sourceStart + cropWidth), y * cropWidth);
+  }
+
+  return { mask: cropped, width: cropWidth, height: cropHeight };
+}
+
+function rotateMask(mask, width, height, quarterTurns) {
+  const turns = ((quarterTurns % 4) + 4) % 4;
+  if (turns === 0) return { mask, width, height };
+
+  let source = mask;
+  let sourceWidth = width;
+  let sourceHeight = height;
+  for (let turn = 0; turn < turns; turn += 1) {
+    const rotated = new Uint8Array(source.length);
+    const targetWidth = sourceHeight;
+    const targetHeight = sourceWidth;
+    for (let y = 0; y < sourceHeight; y += 1) {
+      for (let x = 0; x < sourceWidth; x += 1) {
+        const targetX = sourceHeight - 1 - y;
+        const targetY = x;
+        rotated[targetY * targetWidth + targetX] = source[y * sourceWidth + x];
+      }
+    }
+    source = rotated;
+    sourceWidth = targetWidth;
+    sourceHeight = targetHeight;
+  }
+  return { mask: source, width: sourceWidth, height: sourceHeight };
+}
+
+function extractPureBitsAtRotation(mask, width, height, rect, quarterTurns) {
+  if (quarterTurns === 0) {
+    return rect
+      ? extractPureBitsFromRect(mask, width, height, rect.left, rect.top, rect.width, rect.height)
+      : extractPureBitsFromMask(mask, width, height);
+  }
+
+  const region = rect
+    ? cropMask(mask, width, height, rect.left, rect.top, rect.width, rect.height)
+    : { mask, width, height };
+  const rotated = rotateMask(region.mask, region.width, region.height, quarterTurns);
+  return extractPureBitsFromMask(rotated.mask, rotated.width, rotated.height);
 }
 
 function readCodewordsFromBitMatrix(bitMatrix) {
@@ -722,6 +850,101 @@ export class MaxiCodeScanner {
     return { x: sumX / sumW, y: sumY / sumW };
   }
 
+  findBullseyePatternCandidates() {
+    const mask = this.binarize();
+    const minDim = Math.min(this.width, this.height);
+    const lineStep = Math.max(1, Math.round(minDim / 480));
+    const horizontal = [];
+    const vertical = [];
+
+    const scanLine = (length, read, cross, target) => {
+      const runs = [];
+      let value = read(0);
+      let start = 0;
+      for (let position = 1; position <= length; position += 1) {
+        const next = position < length ? read(position) : 1 - value;
+        if (next === value) continue;
+        runs.push({ value, start, length: position - start });
+        value = next;
+        start = position;
+      }
+
+      for (let index = 0; index <= runs.length - 11; index += 1) {
+        if (runs[index].value !== 1) continue;
+        const widths = runs.slice(index, index + 11).map((run) => run.length);
+        const ringWidths = widths.filter((_, widthIndex) => widthIndex !== 5);
+        const bandWidth = median(ringWidths);
+        if (bandWidth < 1.2 || bandWidth > minDim * 0.065) continue;
+
+        const centerRatio = widths[5] / bandWidth;
+        if (centerRatio < 1.05 || centerRatio > 3.6) continue;
+
+        let symmetryError = 0;
+        for (let pair = 0; pair < 5; pair += 1) {
+          symmetryError += Math.abs(widths[pair] - widths[10 - pair]) /
+            Math.max(widths[pair] + widths[10 - pair], 1);
+        }
+        symmetryError /= 5;
+
+        const widthError = mean(ringWidths.map((width) => Math.abs(width - bandWidth) / bandWidth));
+        const centerError = Math.abs(centerRatio - 2) / 2;
+        const patternScore = clamp(1 - symmetryError * 0.9 - widthError * 0.42 - centerError * 0.22, 0, 1);
+        if (patternScore < 0.45) continue;
+
+        const centerRun = runs[index + 5];
+        target.push({
+          axis: centerRun.start + centerRun.length / 2,
+          cross,
+          bandWidth,
+          patternScore,
+        });
+      }
+    };
+
+    for (let y = 0; y < this.height; y += lineStep) {
+      scanLine(this.width, (x) => mask[y * this.width + x], y, horizontal);
+    }
+    for (let x = 0; x < this.width; x += lineStep) {
+      scanLine(this.height, (y) => mask[y * this.width + x], x, vertical);
+    }
+
+    const horizontalBest = horizontal.sort((a, b) => b.patternScore - a.patternScore).slice(0, 220);
+    const verticalBest = vertical.sort((a, b) => b.patternScore - a.patternScore).slice(0, 220);
+    const paired = [];
+
+    for (const h of horizontalBest) {
+      for (const v of verticalBest) {
+        const maxBand = Math.max(h.bandWidth, v.bandWidth);
+        const minBand = Math.min(h.bandWidth, v.bandWidth);
+        if (maxBand / minBand > 1.85) continue;
+        const tolerance = Math.max(3, maxBand * 2.4);
+        const dx = Math.abs(h.axis - v.cross);
+        const dy = Math.abs(h.cross - v.axis);
+        if (dx > tolerance || dy > tolerance) continue;
+
+        const alignmentError = (dx + dy) / (tolerance * 2);
+        const scaleError = Math.abs(Math.log(h.bandWidth / v.bandWidth));
+        paired.push({
+          x: (h.axis + v.cross) / 2,
+          y: (h.cross + v.axis) / 2,
+          bandWidth: Math.sqrt(h.bandWidth * v.bandWidth),
+          patternScore: clamp((h.patternScore + v.patternScore) / 2 - alignmentError * 0.28 - scaleError * 0.16, 0, 1),
+        });
+      }
+    }
+
+    const candidates = [];
+    for (const candidate of paired.sort((a, b) => b.patternScore - a.patternScore)) {
+      const duplicate = candidates.some((existing) =>
+        Math.hypot(existing.x - candidate.x, existing.y - candidate.y) <
+          Math.max(existing.bandWidth, candidate.bandWidth) * 1.5,
+      );
+      if (!duplicate) candidates.push(candidate);
+      if (candidates.length >= 40) break;
+    }
+    return candidates;
+  }
+
   estimateSymbolBandWidth() {
     const rect = getEnclosingRectangle(this.binarize(), this.width, this.height);
     if (!rect) return null;
@@ -875,6 +1098,7 @@ export class MaxiCodeScanner {
       };
     }
     const widths = this.bullseyeBandWidths(expectedBandWidth);
+    const patternCandidates = this.findBullseyePatternCandidates();
     const step = Math.max(3, Math.round(minDim / (52 + this.options.sensitivity * 18)));
     const threshold = this.options.threshold;
     const isInk = (value) => (this.options.invert ? value >= threshold : value < threshold);
@@ -888,7 +1112,15 @@ export class MaxiCodeScanner {
       rankScore: -Infinity,
     };
 
-    const rankCandidate = (candidate) => {
+    const rankCandidate = (candidate, patternScore = null) => {
+      if (patternScore !== null) {
+        return {
+          ...candidate,
+          patternScore,
+          scaleAgreement: patternScore,
+          rankScore: candidate.score + patternScore * 0.2,
+        };
+      }
       const scaleAgreement = expectedBandWidth
         ? Math.exp(-Math.abs(Math.log(candidate.bandWidth / expectedBandWidth)) * 2.2)
         : 0.5;
@@ -912,14 +1144,28 @@ export class MaxiCodeScanner {
       return middleInk >= probes / 2 && outerInk >= probes / 2;
     };
 
-    for (let y = Math.floor(step / 2); y < this.height; y += step) {
-      for (let x = Math.floor(step / 2); x < this.width; x += step) {
-        if (isInk(sampleGray(gray, this.width, this.height, x, y))) continue;
-        for (const bandWidth of widths) {
-          if (!passesRingProbe(x, y, bandWidth)) continue;
-          const candidate = rankCandidate(this.scoreBullseyeAtScale(x, y, bandWidth, anchor));
-          if (candidate.rankScore > best.rankScore) {
-            best = { x, y, ...candidate };
+    for (const seed of patternCandidates) {
+      for (const scaleFactor of [0.82, 0.9, 0.97, 1.04, 1.12, 1.22]) {
+        const candidate = rankCandidate(
+          this.scoreBullseyeAtScale(seed.x, seed.y, seed.bandWidth * scaleFactor, anchor),
+          seed.patternScore,
+        );
+        if (candidate.rankScore > best.rankScore) {
+          best = { x: seed.x, y: seed.y, ...candidate };
+        }
+      }
+    }
+
+    if (!Number.isFinite(best.score) || best.rankScore < 0.78) {
+      for (let y = Math.floor(step / 2); y < this.height; y += step) {
+        for (let x = Math.floor(step / 2); x < this.width; x += step) {
+          if (isInk(sampleGray(gray, this.width, this.height, x, y))) continue;
+          for (const bandWidth of widths) {
+            if (!passesRingProbe(x, y, bandWidth)) continue;
+            const candidate = rankCandidate(this.scoreBullseyeAtScale(x, y, bandWidth, anchor));
+            if (candidate.rankScore > best.rankScore) {
+              best = { x, y, ...candidate };
+            }
           }
         }
       }
@@ -935,6 +1181,7 @@ export class MaxiCodeScanner {
             for (const scaleFactor of scaleFactors) {
               const candidate = rankCandidate(
                 this.scoreBullseyeAtScale(x, y, origin.bandWidth * scaleFactor, anchor),
+                origin.patternScore ?? null,
               );
               if (candidate.rankScore > best.rankScore) {
                 best = { x, y, ...candidate };
@@ -967,7 +1214,10 @@ export class MaxiCodeScanner {
         const discX = sumX / sumWeight;
         const discY = sumY / sumWeight;
         if (Math.hypot(discX - best.x, discY - best.y) <= best.bandWidth * 0.65) {
-          const centered = rankCandidate(this.scoreBullseyeAtScale(discX, discY, best.bandWidth, anchor));
+          const centered = rankCandidate(
+            this.scoreBullseyeAtScale(discX, discY, best.bandWidth, anchor),
+            best.patternScore ?? null,
+          );
           best = { x: discX, y: discY, ...centered };
         }
       }
@@ -1031,30 +1281,125 @@ export class MaxiCodeScanner {
     return pitch;
   }
 
+  findOrientationCandidates(mask) {
+    const center = this._lastCenter;
+    const ringBand = this._lastBullseyeBandWidth;
+    if (!center || !ringBand) return [];
+
+    const coarse = [];
+    const pitchFactors = [1.24, 1.32, 1.4, 1.46, 1.52, 1.6, 1.68];
+    const verticalScales = [0.88, 1, 1.12];
+    for (const pitchFactor of pitchFactors) {
+      const modulePitch = ringBand * pitchFactor;
+      for (const verticalScale of verticalScales) {
+        for (let degrees = 0; degrees < 360; degrees += 3) {
+          const angle = degrees * Math.PI / 180;
+          coarse.push({
+            angle,
+            modulePitch,
+            verticalScale,
+            score: scoreOrientation(
+              mask,
+              this.width,
+              this.height,
+              center,
+              modulePitch,
+              angle,
+              verticalScale,
+            ),
+          });
+        }
+      }
+    }
+
+    coarse.sort((a, b) => b.score - a.score);
+    const refined = [];
+    for (const candidate of coarse.slice(0, 18)) {
+      for (const angleOffset of [-2, -1, 0, 1, 2]) {
+        for (const pitchScale of [0.97, 1, 1.03]) {
+          for (const verticalScale of [candidate.verticalScale * 0.97, candidate.verticalScale, candidate.verticalScale * 1.03]) {
+            const angle = candidate.angle + angleOffset * Math.PI / 180;
+            const modulePitch = candidate.modulePitch * pitchScale;
+            refined.push({
+              angle,
+              modulePitch,
+              verticalScale,
+              score: scoreOrientation(
+                mask,
+                this.width,
+                this.height,
+                center,
+                modulePitch,
+                angle,
+                verticalScale,
+              ),
+            });
+          }
+        }
+      }
+    }
+
+    refined.sort((a, b) => b.score - a.score);
+    const unique = [];
+    for (const candidate of refined) {
+      const duplicate = unique.some((other) => (
+        Math.abs(other.angle - candidate.angle) < Math.PI / 360
+        && Math.abs(other.modulePitch - candidate.modulePitch) < ringBand * 0.015
+        && Math.abs(other.verticalScale - candidate.verticalScale) < 0.015
+      ));
+      if (!duplicate) unique.push(candidate);
+      if (unique.length >= 60) break;
+    }
+    return unique;
+  }
+
   sampleHexGrid(center, pitch) {
     const mask = this.binarize();
-    const rows = 33;
-    const cols = 30;
-    const layout = buildHexLayout({
-      rows,
-      cols,
-      pitch,
-      centerX: center.x,
-      centerY: center.y,
-    });
+    this._lastOrientationCandidates = this.findOrientationCandidates(mask);
+    const orientation = this._lastOrientationCandidates[0];
 
-    return layout.map((cell) => {
-      const sample = sampleMask(mask, this.width, this.height, cell.x, cell.y);
-      return {
+    if (!orientation || orientation.score < 0.6) {
+      const layout = buildHexLayout({
+        rows: MAXICODE_HEIGHT,
+        cols: MAXICODE_WIDTH,
+        pitch,
+        centerX: center.x,
+        centerY: center.y,
+      });
+      return layout.map((cell) => ({
         ...cell,
-        bit: sample ? 1 : 0,
-      };
-    });
+        bit: sampleMask(mask, this.width, this.height, cell.x, cell.y) ? 1 : 0,
+      }));
+    }
+
+    const cells = [];
+    for (let row = 0; row < MAXICODE_HEIGHT; row += 1) {
+      for (let col = 0; col < MAXICODE_WIDTH; col += 1) {
+        const point = orientedImagePosition(
+          center,
+          orientation.modulePitch,
+          orientation.angle,
+          col,
+          row,
+          orientation.verticalScale,
+        );
+        cells.push({
+          row,
+          col,
+          rowWidth: MAXICODE_WIDTH,
+          rowT: Math.abs((row - 16) / 16),
+          x: point.x,
+          y: point.y,
+          bit: sampleMask(mask, this.width, this.height, point.x, point.y) ? 1 : 0,
+        });
+      }
+    }
+    return cells;
   }
 
   decode(cells) {
     const mask = this.binarize();
-    const candidateRects = [null];
+    const candidateRects = [];
     let decodeFailure = null;
 
     const center = this._lastCenter || null;
@@ -1082,21 +1427,71 @@ export class MaxiCodeScanner {
       let decoded = null;
       let pureBits = null;
       let source = null;
+      let rotation = 0;
 
-      for (const rect of candidateRects) {
+      // A tightly cropped, axis-aligned symbol is common and remains the fastest path.
+      for (const quarterTurns of [0, 1, 2, 3]) {
         try {
-          pureBits = rect
-            ? extractPureBitsFromRect(mask, this.width, this.height, rect.left, rect.top, rect.width, rect.height)
-            : extractPureBitsFromMask(mask, this.width, this.height);
-          const codewords = readCodewordsFromBitMatrix(pureBits);
-          decoded = decodeMaxiCodeData(codewords);
-          source = rect || { left: 0, top: 0, width: this.width, height: this.height };
+          pureBits = extractPureBitsAtRotation(mask, this.width, this.height, null, quarterTurns);
+          decoded = decodeMaxiCodeData(readCodewordsFromBitMatrix(pureBits));
+          source = { left: 0, top: 0, width: this.width, height: this.height };
+          rotation = (360 - quarterTurns * 90) % 360;
           break;
         } catch (error) {
           decodeFailure = error;
           decoded = null;
           pureBits = null;
         }
+      }
+
+      let orientationScore = null;
+      if (!decoded && center && pitch) {
+        const orientations = this._lastOrientationCandidates || this.findOrientationCandidates(mask);
+        for (const orientation of orientations) {
+          try {
+            pureBits = sampleOrientedBitMatrix(
+              mask,
+              this.width,
+              this.height,
+              center,
+              orientation.modulePitch,
+              orientation.angle,
+              orientation.verticalScale,
+            );
+            decoded = decodeMaxiCodeData(readCodewordsFromBitMatrix(pureBits));
+            rotation = ((orientation.angle * 180 / Math.PI) % 360 + 360) % 360;
+            orientationScore = orientation.score;
+            source = {
+              centerX: center.x,
+              centerY: center.y,
+              modulePitch: orientation.modulePitch,
+              verticalScale: orientation.verticalScale,
+            };
+            break;
+          } catch (error) {
+            decodeFailure = error;
+            decoded = null;
+            pureBits = null;
+          }
+        }
+      }
+
+      for (const rect of decoded ? [] : candidateRects) {
+        for (const quarterTurns of [0, 1, 2, 3]) {
+          try {
+            pureBits = extractPureBitsAtRotation(mask, this.width, this.height, rect, quarterTurns);
+            const codewords = readCodewordsFromBitMatrix(pureBits);
+            decoded = decodeMaxiCodeData(codewords);
+            source = rect || { left: 0, top: 0, width: this.width, height: this.height };
+            rotation = (360 - quarterTurns * 90) % 360;
+            break;
+          } catch (error) {
+            decodeFailure = error;
+            decoded = null;
+            pureBits = null;
+          }
+        }
+        if (decoded) break;
       }
 
       if (decoded && pureBits) {
@@ -1112,6 +1507,8 @@ export class MaxiCodeScanner {
           modeGuess,
           mode: decoded.mode,
           errorsCorrected: decoded.errorsCorrected,
+          rotation,
+          orientationScore,
           decoded: true,
           sourceRect: source,
         };
