@@ -70,10 +70,11 @@ export class UpsMaxicodeReader {
     const secondary = rawSecondary
       .replaceAll(UpsMaxicodeReader.EOT, "")
       .replace(new RegExp(`${UpsMaxicodeReader.RS}$`), "");
-    const values = secondary.slice(3).split(UpsMaxicodeReader.GS);
+    let values = secondary.slice(3).split(UpsMaxicodeReader.GS);
     const headerAndTracking = values.shift() || "";
     const headerMatch = /^(96)(1Z[A-Z0-9]{8})$/i.exec(headerAndTracking);
     if (!headerMatch) return null;
+    values = this.normalizeOptionalScacSeparator(values, 0);
 
     const [
       scac = "",
@@ -158,8 +159,9 @@ export class UpsMaxicodeReader {
       throw new TypeError("UPS routing segment must start with 01.");
     }
 
-    const values = segment.slice(2).split(UpsMaxicodeReader.GS);
+    let values = segment.slice(2).split(UpsMaxicodeReader.GS);
     if (values[0] === "") values.shift();
+    values = this.normalizeOptionalScacSeparator(values, 4);
 
     const [
       postalField = "",
@@ -232,5 +234,20 @@ export class UpsMaxicodeReader {
     if (!/^\d{3}$/.test(service)) return null;
 
     return `1Z${account}${service.slice(-2)}${fragment.slice(2)}`.toUpperCase();
+  }
+
+  /**
+   * Fig. 2 marks the GS following the four-character carrier SCAC as
+   * optional. UPS data can therefore contain either `UPSN<GS>123A7V` or the
+   * compact `UPSN123A7V`. Normalize the latter before positional parsing.
+   */
+  normalizeOptionalScacSeparator(values, scacIndex) {
+    const normalized = [...values];
+    const combined = normalized[scacIndex] ?? "";
+    const match = /^(UPSN)([A-Z0-9]{6})$/i.exec(combined);
+    if (match) {
+      normalized.splice(scacIndex, 1, match[1].toUpperCase(), match[2]);
+    }
+    return normalized;
   }
 }

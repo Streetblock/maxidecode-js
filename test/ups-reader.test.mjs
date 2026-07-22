@@ -85,6 +85,26 @@ test("does not fabricate a tracking number from incomplete routing data", () => 
   );
 });
 
+test("accepts the optional GS after the UPSN carrier SCAC", () => {
+  const routingWithoutScacSeparator = [
+    "01",
+    "9641352",
+    "276",
+    "068",
+    "1Z50147020",
+    "UPSN123A7V",
+    "196",
+  ].join(GS);
+  const result = new UpsMaxicodeReader().read(
+    `[)>${RS}${routingWithoutScacSeparator}${RS}${EOT}`,
+  );
+
+  assert.equal(result.secondary.scac, "UPSN");
+  assert.equal(result.secondary.shipperId, "123A7V");
+  assert.equal(result.secondary.julianDayOfPickup, "196");
+  assert.equal(result.secondary.trackingNumberReconstructed, "1Z123A7V6850147020");
+});
+
 test("parses the documented uncompressed UPS detail fields", () => {
   // Field order from the UPS MaxiCode example in the Avery 9433 printer manual.
   const uncompressedRouting = [
@@ -230,4 +250,28 @@ test("recovers the headerless, mispacked Mode 3 message from label 66034", () =>
   assert.deepEqual(result.secondary.unknownFields, []);
   assert.equal(result.compressed, null);
   assert.equal(result.warnings.length, 3);
+});
+
+test("recovers headerless Mode 3 data without the optional GS after UPSN", () => {
+  const malformedMessage = [
+    `352 )${RS}${GS}641`,
+    "027",
+    "01",
+    "961Z45369427",
+    "UPSNW1622R",
+    "196",
+    "",
+    "1/4",
+    "20",
+    "N",
+    "",
+    "KORSCHENBROICH",
+    "",
+  ].join(GS) + RS + EOT;
+
+  const result = new UpsMaxicodeReader().read(malformedMessage);
+
+  assert.equal(result.secondary.scac, "UPSN");
+  assert.equal(result.secondary.shipperId, "W1622R");
+  assert.equal(result.secondary.julianDayOfPickup, "196");
 });
