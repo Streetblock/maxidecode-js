@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MaxiCodeScanner } from "./scanner.js";
+import { MaxiCodeScanner } from "../src/maxicode/scanner.js";
 
 function createScene({ width, height, centerX, centerY, bandWidth, noise = 0, seed = 1 }) {
   const data = new Uint8ClampedArray(width * height * 4);

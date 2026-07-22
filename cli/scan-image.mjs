@@ -1,9 +1,6 @@
-import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
-import { MaxiCodeScanner } from "./scanner.js";
-
-const require = createRequire(import.meta.url);
-const { PNG } = require("./vendor/pngjs/lib/png.js");
+import { PNG } from "pngjs";
+import { MaxiCodeScanner } from "../src/maxicode/scanner.js";
 
 function parseArgs(argv) {
   const args = {

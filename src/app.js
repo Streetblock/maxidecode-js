@@ -1,4 +1,4 @@
-import { MaxiCodeScanner, clamp } from "./scanner.js";
+import { MaxiCodeScanner, clamp } from "./maxicode/scanner.js";
 
 const els = {
   statusPill: document.getElementById("statusPill"),

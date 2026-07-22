@@ -1,1 +1,4 @@
 /Referenz
+node_modules/
+.scan-tmp/
+*.log

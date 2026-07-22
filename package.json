@@ -1,0 +1,13 @@
+{
+  "name": "maxidecode-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "scan": "node cli/scan-image.mjs"
+  },
+  "dependencies": {
+    "pngjs": "^7.0.0"
+  }
+}
