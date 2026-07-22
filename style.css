@@ -414,6 +414,53 @@ h2 {
   font-size: 0.9rem;
 }
 
+.ups-summary {
+  padding: 15px;
+  border: 1px solid rgba(97, 210, 255, 0.3);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(16, 41, 52, 0.92), rgba(8, 20, 27, 0.94));
+}
+
+.ups-summary[hidden] {
+  display: none;
+}
+
+.ups-summary-head {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(122, 185, 207, 0.16);
+}
+
+.ups-summary span,
+.ups-fields span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.ups-summary-head strong {
+  color: #f2fbff;
+  font-family: "Consolas", "SFMono-Regular", "Cascadia Mono", monospace;
+  font-size: clamp(1rem, 3.4vw, 1.24rem);
+  overflow-wrap: anywhere;
+}
+
+.ups-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px 14px;
+  padding-top: 12px;
+}
+
+.ups-fields div {
+  display: grid;
+  gap: 3px;
+}
+
+.ups-fields strong {
+  font-size: 0.92rem;
+}
+
 .result-text {
   margin: 0;
   padding: 16px;

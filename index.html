@@ -134,6 +134,19 @@
               <div class="result-meta" id="confidenceValue">-</div>
             </div>
 
+            <section class="ups-summary" id="upsSummary" hidden aria-label="UPS shipment data">
+              <div class="ups-summary-head">
+                <span>UPS tracking</span>
+                <strong id="upsTracking">-</strong>
+              </div>
+              <div class="ups-fields">
+                <div><span>Postal code</span><strong id="upsPostal">-</strong></div>
+                <div><span>Country</span><strong id="upsCountry">-</strong></div>
+                <div><span>Service</span><strong id="upsService">-</strong></div>
+                <div><span>Format 07</span><strong id="upsFormat07">-</strong></div>
+              </div>
+            </section>
+
             <pre class="result-text" id="decodedText">Load an image to scan.</pre>
 
             <div class="result-details" id="resultDetails">
@@ -159,6 +172,11 @@
               <details class="raw-bytes" open>
                 <summary>Raw bytes</summary>
                 <pre id="rawBytes">-</pre>
+              </details>
+
+              <details class="raw-bytes">
+                <summary>Raw decoded message</summary>
+                <pre id="rawMessage">-</pre>
               </details>
 
               <div class="result-note" id="resultNote">Ready for an image.</div>

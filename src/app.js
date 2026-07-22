@@ -1,4 +1,5 @@
 import { MaxiCodeScanner, clamp } from "./maxicode/scanner.js";
+import { UpsMaxicodeReader } from "./ups/UpsMaxicodeReader.js";
 
 const els = {
   statusPill: document.getElementById("statusPill"),
@@ -6,11 +7,18 @@ const els = {
   confidenceValue: document.getElementById("confidenceValue"),
   sourceLabel: document.getElementById("sourceLabel"),
   decodedText: document.getElementById("decodedText"),
+  upsSummary: document.getElementById("upsSummary"),
+  upsTracking: document.getElementById("upsTracking"),
+  upsPostal: document.getElementById("upsPostal"),
+  upsCountry: document.getElementById("upsCountry"),
+  upsService: document.getElementById("upsService"),
+  upsFormat07: document.getElementById("upsFormat07"),
   modeValue: document.getElementById("modeValue"),
   centerValue: document.getElementById("centerValue"),
   pitchValue: document.getElementById("pitchValue"),
   bytesValue: document.getElementById("bytesValue"),
   rawBytes: document.getElementById("rawBytes"),
+  rawMessage: document.getElementById("rawMessage"),
   resultNote: document.getElementById("resultNote"),
   fileInput: document.getElementById("fileInput"),
   uploadBtn: document.getElementById("uploadBtn"),
@@ -42,6 +50,30 @@ const state = {
 
 const previewCtx = els.previewCanvas.getContext("2d");
 const sourceCtx = els.sourceCanvas.getContext("2d", { willReadFrequently: true });
+const upsReader = new UpsMaxicodeReader();
+
+function visibleControls(value) {
+  return String(value ?? "")
+    .replaceAll("\x1d", "<GS>")
+    .replaceAll("\x1e", "<RS>")
+    .replaceAll("\x1c", "<FS>")
+    .replaceAll("\x04", "<EOT>")
+    .replaceAll("\r", "<CR>\n");
+}
+
+function updateUpsSummary(ups) {
+  const recognized = Boolean(ups?.recognized);
+  els.upsSummary.hidden = !recognized;
+  if (!recognized) return;
+
+  els.upsTracking.textContent = ups.routing.trackingNumber || "Not available";
+  els.upsPostal.textContent = ups.routing.postalCode || "-";
+  els.upsCountry.textContent = ups.routing.countryCode || "-";
+  els.upsService.textContent = ups.routing.serviceClass || "-";
+  els.upsFormat07.textContent = ups.compressed
+    ? ups.compressed.ok ? "Decoded" : "Transport recovered"
+    : "Not present";
+}
 
 function fitContain(sourceWidth, sourceHeight, targetWidth, targetHeight) {
   if (!sourceWidth || !sourceHeight || !targetWidth || !targetHeight) {
@@ -199,6 +231,8 @@ function updateUIFromAnalysis(analysis) {
     els.confidenceValue.textContent = "-";
     els.sourceLabel.textContent = "No image loaded";
     els.decodedText.textContent = "Load an image to scan.";
+    els.rawMessage.textContent = "-";
+    updateUpsSummary(null);
     els.modeValue.textContent = "-";
     els.centerValue.textContent = "-";
     els.pitchValue.textContent = "-";
@@ -221,7 +255,15 @@ function updateUIFromAnalysis(analysis) {
   setResultPill(statusKind, pillText);
   els.confidenceValue.textContent = `${confidencePct}% confidence`;
   els.sourceLabel.textContent = state.sourceName || `${analysis.sourceWidth} x ${analysis.sourceHeight}`;
-  els.decodedText.textContent = analysis.decode?.text || analysis.decode?.error || "No readable payload found.";
+  updateUpsSummary(analysis.ups);
+  if (analysis.ups?.recognized) {
+    els.decodedText.textContent = analysis.ups.compressed
+      ? "UPS routing fields decoded. Format 07 transport recovered; address substitution is still pending verification."
+      : "UPS routing fields decoded. No Format 07 segment is present.";
+  } else {
+    els.decodedText.textContent = analysis.decode?.text || analysis.decode?.error || "No readable payload found.";
+  }
+  els.rawMessage.textContent = analysis.decode?.text ? visibleControls(analysis.decode.text) : "-";
   const rotation = Math.round((analysis.decode?.rotation || 0) * 10) / 10;
   els.modeValue.textContent = analysis.decode?.mode
     ? `Mode ${analysis.decode.mode} · ${rotation}°`
@@ -266,6 +308,14 @@ function scanSource() {
   const pitch = center.found ? scanner.estimateModulePitch(center) : center.bandWidth || 0;
   const cells = center.found ? scanner.sampleHexGrid(center, pitch) : [];
   const decode = scanner.decode(cells);
+  let ups = null;
+  if (decode.decoded && decode.text) {
+    try {
+      ups = upsReader.read(decode.text);
+    } catch (error) {
+      ups = { recognized: false, error: error?.message || String(error) };
+    }
+  }
   const confidence = decode.decoded
     ? clamp(0.72 + center.confidence * 0.28, 0, 1)
     : clamp(center.confidence * 0.72 + decode.density * 0.2, 0, 1);
@@ -275,6 +325,7 @@ function scanSource() {
     pitch,
     cells,
     decode,
+    ups,
     confidence,
     sourceKind: state.sourceKind,
     sourceName: state.sourceName,
