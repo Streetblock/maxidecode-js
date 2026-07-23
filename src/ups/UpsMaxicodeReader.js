@@ -187,6 +187,7 @@ export class UpsMaxicodeReader {
 
   buildStructuredFields({ primary, secondary, compressed, format05 }) {
     const compressedFields = compressed?.ok ? compressed.fields : null;
+    const compressedWeight = compressedFields?.records?.weightPounds ?? null;
     const choose = (...candidates) => candidates.find((value) => value != null && value !== "") ?? null;
     const chooseMatching = (pattern, ...candidates) => candidates.find((value) => (
       value != null && pattern.test(String(value))
@@ -205,6 +206,24 @@ export class UpsMaxicodeReader {
     const addressLine3 = chooseAddress(format05?.shipToAddressLine3, compressedFields?.shipToAddressLine3);
     const addressLine4 = chooseAddress(format05?.shipToAddressLine4, compressedFields?.shipToAddressLine4);
     const addressLine5 = chooseAddress(format05?.shipToAddressLine5, compressedFields?.shipToAddressLine5);
+
+    const uncompressedWeight = /^\d{1,10}$/.test(String(secondary.weightPounds ?? ""))
+      ? secondary.weightPounds
+      : null;
+    const compressedWeightValue = compressedWeight?.valid ? compressedWeight.value : null;
+    const weightValue = uncompressedWeight ?? compressedWeightValue;
+    const weightSource = uncompressedWeight != null
+      ? "format01"
+      : compressedWeightValue != null
+        ? "format07"
+        : null;
+    const weightStatus = weightValue != null
+      ? "present"
+      : compressedWeight?.status === "partial" || compressedWeight?.status === "invalid"
+        ? compressedWeight.status
+        : secondary.weightPounds === null && compressed == null
+          ? "not-encoded"
+          : "unavailable";
 
     return {
       destination: {
@@ -245,12 +264,19 @@ export class UpsMaxicodeReader {
         // UPS Table 1 names this field only "Weight" and does not carry a
         // unit alongside the numeric value. The printed label may use lb or
         // kg, so the structured API must not guess the unit.
-        weightValue: chooseMatching(
-          /^\d{1,10}$/,
-          secondary.weightPounds,
-          compressedFields?.weightPounds,
-        ),
+        weightValue,
         weightUnit: null,
+        weight: {
+          raw: weightSource === "format01"
+            ? secondary.weightPounds
+            : compressedWeight?.raw ?? null,
+          value: weightValue,
+          normalizedValue: null,
+          scale: null,
+          unit: null,
+          source: weightSource,
+          status: weightStatus,
+        },
       },
     };
   }

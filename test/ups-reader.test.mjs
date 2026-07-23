@@ -191,6 +191,15 @@ test("parses the IDAutomation uncompressed UPS golden message", () => {
   assert.equal(result.secondary.shipmentId, null);
   assert.equal(result.secondary.packageInShipment, "1/1");
   assert.equal(result.secondary.weightPounds, null);
+  assert.deepEqual(result.shipment.weight, {
+    raw: null,
+    value: null,
+    normalizedValue: null,
+    scale: null,
+    unit: null,
+    source: null,
+    status: "not-encoded",
+  });
   assert.equal(result.secondary.addressValidation, "Y");
   assert.equal(result.secondary.shipToStreet, "135Lightner");
   assert.equal(result.secondary.shipToCity, "TAMPA");
@@ -245,6 +254,15 @@ test("structures the uncompressed fields from the French label", () => {
     packageInShipment: "1/1",
     weightValue: "1",
     weightUnit: null,
+    weight: {
+      raw: "1",
+      value: "1",
+      normalizedValue: null,
+      scale: null,
+      unit: null,
+      source: "format01",
+      status: "present",
+    },
   });
   assert.equal(result.compressed, null);
 });
@@ -322,11 +340,36 @@ test("keeps invalid typed fields from a partial Format 07 decode out of the summ
   assert.equal(result.compressed.fields.shipToAddressLine3, "905 LOMA VISTA DR");
   assert.equal(result.compressed.fields.addressValidation, "50");
   assert.equal(result.compressed.fields.weightPounds, "JOHN SMITH");
+  assert.deepEqual(result.compressed.fields.records.weightPounds, {
+    field: "weightPounds",
+    priority: 8,
+    raw: "JOHN SMITH",
+    value: null,
+    status: "invalid",
+    valid: false,
+    source: "format07",
+    terminatedByGs: true,
+    bitRange: {
+      payloadStart: 176,
+      payloadEnd: 233,
+      transportStart: 180,
+      transportEnd: 237,
+    },
+  });
   assert.equal(result.destination.postalCodeFormatted, "90210");
   assert.equal(result.destination.addressLine3, "905 LOMA VISTA DR");
   assert.equal(result.destination.addressValidation, null);
   assert.equal(result.shipment.weightValue, null);
   assert.equal(result.shipment.weightUnit, null);
+  assert.deepEqual(result.shipment.weight, {
+    raw: "JOHN SMITH",
+    value: null,
+    normalizedValue: null,
+    scale: null,
+    unit: null,
+    source: null,
+    status: "invalid",
+  });
   assert.equal(result.shipment.packageInShipment, null);
 });
 

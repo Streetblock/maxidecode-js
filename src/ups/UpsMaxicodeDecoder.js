@@ -102,12 +102,21 @@ export class UpsMaxicodeDecoder {
       (left, right) => right.bits.length - left.bits.length,
     );
     const tokens = [];
+    const tokenTrace = [];
     let offset = 0;
 
     while (offset < payloadBits.length) {
       const match = entries.find((entry) => payloadBits.startsWith(entry.bits, offset));
       if (!match) break;
       tokens.push(match.token);
+      tokenTrace.push({
+        token: match.token,
+        figure: match.figure ?? null,
+        payloadBitStart: offset,
+        payloadBitEnd: offset + match.bits.length,
+        transportBitStart: offset + 4,
+        transportBitEnd: offset + match.bits.length + 4,
+      });
       offset += match.bits.length;
     }
 
@@ -115,6 +124,7 @@ export class UpsMaxicodeDecoder {
     return {
       text: tokens.join(""),
       tokens,
+      tokenTrace,
       headerBits,
       headerValue: Number.parseInt(headerBits, 2),
       bitsConsumed: offset,
@@ -160,7 +170,10 @@ export class UpsMaxicodeDecoder {
       },
       truncation: "unknown: header bit layout is not disclosed by US7039496B2",
       decodedText: decoded.text,
-      fields: this.parseAnsiFields(decoded.text),
+      fields: this.parseAnsiFields(decoded.text, {
+        decoderComplete: decoded.complete,
+        tokenTrace: decoded.tokenTrace,
+      }),
       decoder: {
         bitsConsumed: decoded.bitsConsumed,
         bitsAvailable: decoded.bitsAvailable,
@@ -189,6 +202,7 @@ export class UpsMaxicodeDecoder {
     return {
       text: result.text,
       tokens: result.tokens ?? null,
+      tokenTrace: result.tokenTrace ?? null,
       headerBits: result.headerBits ?? null,
       headerValue: result.headerValue ?? null,
       bitsConsumed: result.bitsConsumed ?? null,
@@ -211,7 +225,7 @@ export class UpsMaxicodeDecoder {
    * Best-effort representation of the GS-separated fields shown in Fig. 2.
    * Unknown identifiers are retained rather than discarded.
    */
-  parseAnsiFields(text) {
+  parseAnsiFields(text, { decoderComplete = true, tokenTrace = null } = {}) {
     // Patent Table 1: the compressor serializes these fields in priority
     // order. Keep the field-slot names even when a producer puts content in a
     // slot that differs from its intended semantics.
@@ -227,6 +241,12 @@ export class UpsMaxicodeDecoder {
       "packageInShipment",
       "shipmentId",
     ];
+    const validators = {
+      julianDayOfPickup: /^\d{3}$/,
+      addressValidation: /^[YN]$/,
+      weightPounds: /^\d{1,10}$/,
+      packageInShipment: /^\d{1,3}\/\d{1,3}$/,
+    };
     const identifiers = {
       "20L": "shipToAddressLine2",
       "21L": "shipToAddressLine3",
@@ -234,12 +254,55 @@ export class UpsMaxicodeDecoder {
       "23L": "shipToAddressLine5",
     };
     const segments = text.split(UpsMaxicodeDecoder.GS);
+    const segmentTraces = Array.from({ length: segments.length }, () => []);
+    if (Array.isArray(tokenTrace)) {
+      let segmentIndex = 0;
+      for (const trace of tokenTrace) {
+        if (trace.token === UpsMaxicodeDecoder.GS) {
+          segmentIndex += 1;
+        } else if (segmentTraces[segmentIndex]) {
+          segmentTraces[segmentIndex].push(trace);
+        }
+      }
+    }
     const unknown = [];
     const values = Object.fromEntries(priorityOrder.map((field, index) => {
       const raw = segments[index] ?? "";
       return [field, raw.trim().length ? raw : null];
     }));
     const identified = {};
+    const records = Object.fromEntries(priorityOrder.map((field, index) => {
+      const available = index < segments.length;
+      const raw = available ? segments[index] : null;
+      const finalUndelimitedSegment = available && index === segments.length - 1 && !text.endsWith(UpsMaxicodeDecoder.GS);
+      const partial = finalUndelimitedSegment && !decoderComplete;
+      const populated = typeof raw === "string" && raw.trim().length > 0;
+      const valid = populated && validators[field] ? validators[field].test(raw) : populated;
+      const traces = segmentTraces[index] ?? [];
+      const bitRange = traces.length ? {
+        payloadStart: traces[0].payloadBitStart,
+        payloadEnd: traces.at(-1).payloadBitEnd,
+        transportStart: traces[0].transportBitStart,
+        transportEnd: traces.at(-1).transportBitEnd,
+      } : null;
+      let status = "present";
+      if (!available) status = "unavailable";
+      else if (partial) status = "partial";
+      else if (!populated) status = "empty";
+      else if (!valid) status = "invalid";
+
+      return [field, {
+        field,
+        priority: index + 1,
+        raw,
+        value: valid && !partial ? raw : null,
+        status,
+        valid: valid && !partial,
+        source: "format07",
+        terminatedByGs: available && index < segments.length - 1,
+        bitRange,
+      }];
+    }));
 
     for (const raw of segments.filter((segment) => segment.trim().length > 0)) {
       const match = /^(20L|21L|22L|23L)(.*)$/s.exec(raw);
@@ -254,6 +317,10 @@ export class UpsMaxicodeDecoder {
     }
     return {
       ...values,
+      records,
+      // The patent calls priority slot 8 simply "Weight". Preserve the old
+      // property for compatibility, but expose a unit-neutral raw name too.
+      weightRaw: records.weightPounds.raw,
       identified,
       segments,
       nonEmptySegments: segments.filter((segment) => segment.trim().length > 0),
