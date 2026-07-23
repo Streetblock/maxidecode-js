@@ -405,6 +405,39 @@ test("flags an uncompressed Mode 2 payload truncated before RS EOT", () => {
   ]);
 });
 
+test("keeps UPS routing fields when a Format 07 transport is truncated", () => {
+  // bcgen encodes the ANSI message as ordinary MaxiCode text and reaches the
+  // Mode 2 capacity after eleven of the required 45 Format 07 symbols.
+  const truncatedFormat07 = [
+    "01",
+    "96116352242",
+    "480",
+    "003",
+    "1Z50978063",
+    "UPSN",
+    "123123",
+  ].join(GS);
+  const truncatedMessage = `[)>${RS}${truncatedFormat07}${RS}07G:%"6*AH537${RS}${EOT}`;
+
+  const result = new UpsMaxicodeReader().read(truncatedMessage);
+
+  assert.equal(result.recognized, true);
+  assert.equal(result.status, "truncated");
+  assert.equal(result.primary.postalCode, "116352242");
+  assert.equal(result.primary.countryCode, "480");
+  assert.equal(result.primary.serviceClass, "003");
+  assert.equal(result.secondary.trackingNumberEncoded, "1Z50978063");
+  assert.equal(result.secondary.shipperId, "123123");
+  assert.equal(result.compressed.ok, false);
+  assert.equal(result.compressed.status, "truncated");
+  assert.equal(result.compressed.payload, `G:%"6*AH537`);
+  assert.equal(result.compressed.receivedSymbols, 11);
+  assert.equal(result.compressed.expectedSymbols, 45);
+  assert.deepEqual(result.warnings, [
+    "Format 07 transport is truncated (11/45 symbols).",
+  ]);
+});
+
 test("does not promote a syntactically valid but truncated Format 07 field", () => {
   const format07Decoder = {
     decode() {

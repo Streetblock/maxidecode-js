@@ -95,7 +95,9 @@ function updateUpsSummary(ups) {
       ? ups.compressed.decoder.complete
         ? "Bitstream expanded"
         : "Expanded with unresolved tail"
-      : "Transport recovered"
+      : ups.compressed.status === "truncated"
+        ? "Truncated transport"
+        : "Invalid transport"
     : "Not present";
   els.upsCity.textContent = ups.destination.city || "-";
   els.upsState.textContent = ups.destination.state || "-";
@@ -133,7 +135,10 @@ function formatUpsResult(ups) {
     return `${recoveryText}UPS routing fields decoded. No Format 07 segment is present.${warningText}`;
   }
   if (!ups.compressed.ok) {
-    return `UPS routing fields decoded. Format 07 transport recovered, but its substitutions could not be expanded.${warningText}`;
+    const transportState = ups.compressed.status === "truncated"
+      ? `Format 07 transport is truncated (${ups.compressed.receivedSymbols}/${ups.compressed.expectedSymbols} symbols).`
+      : `Format 07 transport is invalid: ${ups.compressed.error}`;
+    return `UPS routing fields decoded. ${transportState}${warningText}`;
   }
 
   const lines = ups.compressed.fields.nonEmptySegments;
