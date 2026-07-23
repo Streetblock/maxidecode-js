@@ -387,9 +387,58 @@ h2 {
   font-size: 0.9rem;
 }
 
-.hint-row span:first-child {
+.hint-copy {
+  display: flex;
+  gap: 12px;
+}
+
+.hint-copy span:first-child {
   color: var(--cyan);
   font-weight: 650;
+}
+
+.recovery-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #ffd28a;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.recovery-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.recovery-toggle-mark {
+  width: 30px;
+  height: 17px;
+  padding: 2px;
+  border: 1px solid rgba(247, 190, 85, 0.5);
+  border-radius: 999px;
+  background: rgba(247, 190, 85, 0.08);
+}
+
+.recovery-toggle-mark::after {
+  content: "";
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #b9c9d0;
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+.recovery-toggle input:checked + .recovery-toggle-mark::after {
+  transform: translateX(13px);
+  background: var(--amber);
+}
+
+.recovery-toggle input:focus-visible + .recovery-toggle-mark {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
 }
 
 .result-card {
@@ -483,6 +532,45 @@ h2 {
 
 .ups-detail-fields .wide {
   grid-column: 1 / -1;
+}
+
+.ups-recovery {
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid rgba(247, 190, 85, 0.42);
+  border-radius: 14px;
+  background: rgba(66, 43, 8, 0.28);
+}
+
+.ups-recovery[hidden] {
+  display: none;
+}
+
+.ups-recovery-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ups-recovery h3 {
+  margin: 0;
+  color: #ffe2ad;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ups-recovery-head strong {
+  color: var(--amber);
+  font-size: 0.78rem;
+}
+
+.ups-recovery p {
+  margin: 8px 0 0;
+  color: #d8c7a6;
+  font-size: 0.8rem;
+  line-height: 1.45;
 }
 
 .result-text {
@@ -812,7 +900,27 @@ h2 {
   }
 
   .hint-row {
+    position: fixed;
+    z-index: 44;
+    top: calc(112px + env(safe-area-inset-top));
+    right: 12px;
+    display: block;
+    margin: 0;
+  }
+
+  .hint-copy {
     display: none;
+  }
+
+  .recovery-toggle {
+    min-height: 34px;
+    padding: 6px 10px;
+    border: 1px solid rgba(247, 190, 85, 0.28);
+    border-radius: 999px;
+    background: rgba(7, 13, 18, 0.76);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+    font-size: 0.76rem;
+    backdrop-filter: blur(14px);
   }
 
   .result-panel {

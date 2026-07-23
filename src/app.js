@@ -29,6 +29,16 @@ const els = {
   upsPackage: document.getElementById("upsPackage"),
   upsWeight: document.getElementById("upsWeight"),
   upsWeightUnit: document.getElementById("upsWeightUnit"),
+  upsRecovery: document.getElementById("upsRecovery"),
+  upsRecoveryBit: document.getElementById("upsRecoveryBit"),
+  upsRecoveryCoverage: document.getElementById("upsRecoveryCoverage"),
+  upsRecoveryStreet: document.getElementById("upsRecoveryStreet"),
+  upsRecoveryPostal: document.getElementById("upsRecoveryPostal"),
+  upsRecoveryJulian: document.getElementById("upsRecoveryJulian"),
+  upsRecoveryValidation: document.getElementById("upsRecoveryValidation"),
+  upsRecoveryWeight: document.getElementById("upsRecoveryWeight"),
+  upsRecoveryPackage: document.getElementById("upsRecoveryPackage"),
+  format07RecoveryToggle: document.getElementById("format07RecoveryToggle"),
   modeValue: document.getElementById("modeValue"),
   centerValue: document.getElementById("centerValue"),
   pitchValue: document.getElementById("pitchValue"),
@@ -81,7 +91,13 @@ function visibleControls(value) {
 function updateUpsSummary(ups) {
   const recognized = Boolean(ups?.recognized);
   els.upsSummary.hidden = !recognized;
-  if (!recognized) return;
+  if (!recognized) {
+    els.upsRecovery.hidden = true;
+    return;
+  }
+
+  const recovery = ups.compressed?.recovery;
+  const recoveryCandidate = recovery?.applied ? recovery.candidate : null;
 
   els.upsTracking.textContent = ups.secondary.trackingNumberReconstructed
     || ups.secondary.trackingNumberEncoded
@@ -90,7 +106,9 @@ function updateUpsSummary(ups) {
   els.upsCountry.textContent = ups.primary.countryCode || "-";
   els.upsService.textContent = ups.primary.serviceClass || "-";
   els.upsFormat07.textContent = ups.compressed
-    ? ups.compressed.ok
+    ? recoveryCandidate
+      ? "Recovery candidate"
+      : ups.compressed.ok
       ? ups.compressed.decoder.complete ? "Decoded" : "Decoded (partial)"
       : "Transport recovered"
     : "Not present";
@@ -107,6 +125,24 @@ function updateUpsSummary(ups) {
   els.upsPackage.textContent = ups.shipment.packageInShipment || "-";
   els.upsWeight.textContent = ups.shipment.weightValue || "-";
   els.upsWeightUnit.textContent = ups.shipment.weightUnit || "Not encoded";
+
+  els.upsRecovery.hidden = !recoveryCandidate;
+  if (recoveryCandidate) {
+    const [changedBit] = recoveryCandidate.changedBits;
+    const fields = recoveryCandidate.fieldCandidates;
+    els.upsRecoveryBit.textContent = changedBit
+      ? `payload ${changedBit.payloadBitOffset}: ${changedBit.from} → ${changedBit.to}`
+      : "-";
+    els.upsRecoveryCoverage.textContent = `${recovery.standardBitsConsumed} → ${recoveryCandidate.bitsConsumed} / ${recoveryCandidate.bitsAvailable}`;
+    els.upsRecoveryStreet.textContent = fields.street?.value || "-";
+    els.upsRecoveryPostal.textContent = fields.postalCode?.value || "-";
+    els.upsRecoveryJulian.textContent = fields.julianDayOfPickup?.value || "-";
+    els.upsRecoveryValidation.textContent = fields.addressValidation?.value || "-";
+    els.upsRecoveryWeight.textContent = fields.weightValue?.value || "-";
+    els.upsRecoveryPackage.textContent = fields.packageInShipment
+      ? `${fields.packageInShipment.value}${fields.packageInShipment.complete ? "" : " (partial)"}`
+      : "-";
+  }
 }
 
 function formatUpsResult(ups) {
@@ -127,7 +163,17 @@ function formatUpsResult(ups) {
   const suffix = ups.compressed.decoder.complete
     ? ""
     : "\n\nPartial result: the final compressed bits do not form another complete token.";
-  return `UPS Format 07\n${lines.join("\n")}${suffix}${warningText}`;
+  const recovered = ups.compressed.recovery?.candidate;
+  const recoverySuffix = recovered
+    ? [
+        "",
+        "Recovery candidate — not Reed-Solomon verified",
+        visibleControls(recovered.decodedText),
+        `Changed payload bit(s): ${recovered.changedBits.map((bit) => `${bit.payloadBitOffset} (${bit.from}→${bit.to})`).join(", ")}`,
+        `Patent-token coverage: ${ups.compressed.recovery.standardBitsConsumed} → ${recovered.bitsConsumed}/${recovered.bitsAvailable} bits`,
+      ].join("\n")
+    : "";
+  return `UPS Format 07\n${lines.join("\n")}${suffix}${recoverySuffix}${warningText}`;
 }
 
 function fitContain(sourceWidth, sourceHeight, targetWidth, targetHeight) {
@@ -300,7 +346,11 @@ function updateUIFromAnalysis(analysis) {
   }
 
   const confidencePct = Math.round((analysis.confidence ?? 0) * 1000) / 10;
-  const recoveryMode = Boolean(analysis.ups?.variant || analysis.ups?.primary?.recovered);
+  const recoveryMode = Boolean(
+    analysis.ups?.variant
+    || analysis.ups?.primary?.recovered
+    || analysis.ups?.compressed?.recovery?.applied,
+  );
   let statusKind = analysis.decode?.decoded ? "live" : confidencePct >= 65 ? "warn" : "bad";
   let pillText = analysis.decode?.decoded ? "Decoded" : "Analyzed";
   let statusText = analysis.decode?.decoded
@@ -314,7 +364,9 @@ function updateUIFromAnalysis(analysis) {
 
   setStatus(statusKind, statusText);
   setResultPill(statusKind, pillText);
-  els.confidenceValue.textContent = `${confidencePct}% confidence`;
+  els.confidenceValue.textContent = recoveryMode
+    ? `${confidencePct}% scan · recovery unverified`
+    : `${confidencePct}% confidence`;
   els.sourceLabel.textContent = state.sourceName || `${analysis.sourceWidth} x ${analysis.sourceHeight}`;
   updateUpsSummary(analysis.ups);
   if (analysis.ups?.recognized) {
@@ -345,8 +397,10 @@ function updateUIFromAnalysis(analysis) {
         .map((byte, index) => `${index.toString(16).padStart(2, "0")} ${byte.toString(16).padStart(2, "0")}`)
         .join("  ")
     : "-";
-  const recoveryNote = recoveryMode
-    ? " Recovery mode: non-standard UPS framing and mispacked primary fields require review."
+  const recoveryNote = analysis.ups?.compressed?.recovery?.applied
+    ? " Format 07 recovery changed post-Reed-Solomon bits; candidate values require review."
+    : recoveryMode
+      ? " Recovery mode: non-standard UPS framing and mispacked primary fields require review."
     : "";
   const thresholdNote = analysis.threshold !== AUTO_THRESHOLD_CANDIDATES[0]
     ? ` Auto-selected threshold ${analysis.threshold}.`
@@ -387,7 +441,9 @@ function scanSource() {
   let ups = null;
   if (decode.decoded && decode.text) {
     try {
-      ups = upsReader.read(decode.text);
+      ups = upsReader.read(decode.text, {
+        format07Recovery: els.format07RecoveryToggle.checked,
+      });
     } catch (error) {
       ups = { recognized: false, error: error?.message || String(error) };
     }
@@ -668,6 +724,9 @@ function wireEvents() {
   });
 
   els.clearBtn.addEventListener("click", clearState);
+  els.format07RecoveryToggle.addEventListener("change", () => {
+    if (sourceCanvasHasContent()) scanSource();
+  });
   els.copyBtn.addEventListener("click", copyResult);
   els.resultToggle.addEventListener("click", () => {
     setResultExpanded(!els.resultPanel.classList.contains("is-expanded"));
