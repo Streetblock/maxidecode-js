@@ -939,6 +939,7 @@ export class MaxiCodeScanner {
     };
     this._gray = null;
     this._mask = null;
+    this._bullseyePatternCandidates = null;
   }
 
   grayscale() {
@@ -1014,6 +1015,8 @@ export class MaxiCodeScanner {
   }
 
   findBullseyePatternCandidates() {
+    if (this._bullseyePatternCandidates) return this._bullseyePatternCandidates;
+
     const mask = this.binarize();
     const minDim = Math.min(this.width, this.height);
     const lineStep = Math.max(1, Math.round(minDim / 480));
@@ -1037,7 +1040,10 @@ export class MaxiCodeScanner {
         const widths = runs.slice(index, index + 11).map((run) => run.length);
         const ringWidths = widths.filter((_, widthIndex) => widthIndex !== 5);
         const bandWidth = median(ringWidths);
-        if (bandWidth < 1.2 || bandWidth > minDim * 0.065) continue;
+        // Downsampled web labels can still contain an RS-decodable MaxiCode
+        // with bullseye bands only one source pixel wide. Keep those seeds;
+        // the radial score and ultimately Reed-Solomon reject false matches.
+        if (bandWidth < 0.8 || bandWidth > minDim * 0.065) continue;
 
         const centerRatio = widths[5] / bandWidth;
         if (centerRatio < 1.05 || centerRatio > 3.6) continue;
@@ -1105,6 +1111,7 @@ export class MaxiCodeScanner {
       if (!duplicate) candidates.push(candidate);
       if (candidates.length >= 40) break;
     }
+    this._bullseyePatternCandidates = candidates;
     return candidates;
   }
 
