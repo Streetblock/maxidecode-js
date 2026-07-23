@@ -380,6 +380,31 @@ test("reads the Honolulu Mode 2 sample without inventing a weight unit", () => {
   assert.equal(result.compressed.decoder.complete, false);
 });
 
+test("flags an uncompressed Mode 2 payload truncated before RS EOT", () => {
+  // bcgen accepts a longer source string, but a Mode 2 symbol only retains
+  // data through the first character of the extra UHU field. Reed-Solomon is
+  // valid for those retained codewords, so envelope validation must detect
+  // the source truncation independently of symbol error correction.
+  const truncatedMessage = "[)>\x1e01\x1d96902101000\x1d840\x1d001"
+    + "\x1d1Z00004951\x1dUPSN\x1d06X610\x1d001\x1dS1\x1d1/1"
+    + "\x1d1\x1dY\x1d1 ARCHER STREET\x1dA\x1dTEST\x1d\x1dU";
+
+  const result = new UpsMaxicodeReader().read(truncatedMessage);
+
+  assert.equal(result.recognized, true);
+  assert.equal(result.standardEnvelope, false);
+  assert.equal(result.status, "truncated");
+  assert.equal(result.secondary.shipToState, "TEST");
+  assert.deepEqual(result.secondary.unknownFields, ["", "U"]);
+  assert.equal(result.destination.state, null);
+  assert.deepEqual(result.warnings, [
+    "Format 01 state must contain exactly two uppercase letters.",
+    "ANSI message trailer <RS><EOT> is missing.",
+    "1 unexpected field(s) follow the Format 01 state field.",
+    "The MaxiCode payload appears truncated before the ANSI message trailer.",
+  ]);
+});
+
 test("does not promote a syntactically valid but truncated Format 07 field", () => {
   const format07Decoder = {
     decode() {
