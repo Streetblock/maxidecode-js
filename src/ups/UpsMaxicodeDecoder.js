@@ -136,7 +136,7 @@ export class UpsMaxicodeDecoder {
    * The returned interoperability notes distinguish patent-defined operations
    * from framing details established with the supplied label vectors.
    */
-  decode(compressedString) {
+  decode(compressedString, { recovery = false } = {}) {
     const envelope = this.#parseEnvelope(compressedString);
 
     const bytes = this.transportDecoder(envelope.payload);
@@ -146,6 +146,17 @@ export class UpsMaxicodeDecoder {
     }
 
     const decoded = this.decodeHuffmanBytes(bytes);
+    const recoveryOptions = recovery === true ? {} : recovery;
+    const recovered = recovery && !decoded.complete
+      ? UpsMaxicodeDecoder.recoverSingleBit(bytes, this.dictionary, {
+          baseline: decoded,
+          ...recoveryOptions,
+        })
+      : null;
+    if (recovered?.candidate) {
+      recovered.candidate.fields = this.parseAnsiFields(recovered.candidate.decodedText);
+    }
+
     return {
       ok: decoded.text.length > 0,
       version: envelope.version,
@@ -173,7 +184,204 @@ export class UpsMaxicodeDecoder {
           "when table values overlap, the longest matching value wins",
         ],
       },
+      ...(recovery ? {
+        recovery: recovered ?? {
+          attempted: false,
+          applied: false,
+          reason: decoded.complete ? "standard-decode-complete" : "no-candidate",
+        },
+      } : {}),
     };
+  }
+
+  /**
+   * Bounded post-RS diagnostic recovery for a substitution stream that stops
+   * between patent tokens. This is deliberately opt-in: changing a decoded
+   * payload bit invalidates Reed-Solomon provenance, even when the resulting
+   * stream consists entirely of Fig. 4 tokens.
+   */
+  static recoverSingleBit(bytes, dictionary = FORMAT_07_DICTIONARY, {
+    baseline = null,
+    searchBefore = 16,
+    searchAfter = 16,
+    maxCandidates = 5,
+  } = {}) {
+    const standard = baseline ?? UpsMaxicodeDecoder.decodeSubstitutions(bytes, dictionary);
+    if (standard.complete) {
+      return {
+        attempted: false,
+        applied: false,
+        reason: "standard-decode-complete",
+      };
+    }
+
+    const start = Math.max(0, standard.bitsConsumed - searchBefore);
+    const end = Math.min(252, standard.bitsConsumed + searchAfter + 1);
+    const candidates = [];
+
+    for (let payloadBitOffset = start; payloadBitOffset < end; payloadBitOffset += 1) {
+      // The substitution payload begins after the four framing bits.
+      const transportBitOffset = payloadBitOffset + 4;
+      const byteIndex = Math.floor(transportBitOffset / 8);
+      const bitIndexFromMsb = transportBitOffset % 8;
+      const mask = 1 << (7 - bitIndexFromMsb);
+      const mutated = Uint8Array.from(bytes);
+      const originalBit = (mutated[byteIndex] & mask) === 0 ? 0 : 1;
+      mutated[byteIndex] ^= mask;
+
+      const decoded = UpsMaxicodeDecoder.decodeSubstitutions(mutated, dictionary);
+      if (decoded.bitsConsumed <= standard.bitsConsumed) continue;
+
+      const assessment = UpsMaxicodeDecoder.scoreRecoveryCandidate(decoded);
+      candidates.push({
+        decodedText: decoded.text,
+        tokens: decoded.tokens,
+        bitsConsumed: decoded.bitsConsumed,
+        bitsAvailable: decoded.bitsAvailable,
+        trailingBits: decoded.trailingBits,
+        complete: decoded.complete,
+        changedBits: [{
+          payloadBitOffset,
+          transportBitOffset,
+          byteIndex,
+          bitIndexFromMsb,
+          from: originalBit,
+          to: originalBit ^ 1,
+        }],
+        score: assessment.score,
+        rankScore: decoded.bitsConsumed + assessment.score,
+        signals: assessment.signals,
+        fieldCandidates: UpsMaxicodeDecoder.extractRecoveryFieldCandidates(decoded.text),
+      });
+    }
+
+    candidates.sort((left, right) => (
+      right.rankScore - left.rankScore
+      || right.bitsConsumed - left.bitsConsumed
+      || right.score - left.score
+      || left.changedBits[0].payloadBitOffset - right.changedBits[0].payloadBitOffset
+    ));
+    const candidate = candidates[0] ?? null;
+
+    return {
+      attempted: true,
+      applied: Boolean(candidate),
+      mode: "single-bit-format07-chase",
+      confidence: candidate ? "candidate" : "none",
+      reedSolomonVerified: false,
+      standardBitsConsumed: standard.bitsConsumed,
+      searchRange: {
+        payloadBitStart: start,
+        payloadBitEndExclusive: end,
+      },
+      candidate,
+      alternatives: candidates.slice(1, maxCandidates).map((entry) => ({
+        decodedText: entry.decodedText,
+        bitsConsumed: entry.bitsConsumed,
+        complete: entry.complete,
+        changedBits: entry.changedBits,
+        score: entry.score,
+        rankScore: entry.rankScore,
+        signals: entry.signals,
+        fieldCandidates: entry.fieldCandidates,
+      })),
+      warning: candidate
+        ? "Candidate mutates post-Reed-Solomon data and requires review."
+        : "No single-bit candidate extends the patent-token stream.",
+    };
+  }
+
+  /** Rank recovery candidates without treating semantic resemblance as proof. */
+  static scoreRecoveryCandidate(decoded) {
+    const text = decoded.text;
+    const segments = text.split(UpsMaxicodeDecoder.GS);
+    const signals = [];
+    let score = 0;
+
+    const postalMatches = text.match(/(?:^|\s)\d{5}(?:-\d{4})?(?=\s|\x1d|$)/g) ?? [];
+    if (postalMatches.length) {
+      score += postalMatches.length * 30;
+      signals.push("postal-like-token");
+    }
+    if (segments.some((segment) => /^\d{3}$/.test(segment))) {
+      score += 12;
+      signals.push("julian-day-like-segment");
+    }
+    if (segments.some((segment) => /^[YN]\d{1,10}$/.test(segment))) {
+      score += 8;
+      signals.push("validation-and-weight-like-segment");
+    }
+    if (segments.some((segment) => /^\d{1,3}\/\d{0,3}$/.test(segment))) {
+      score += 12;
+      signals.push("package-count-like-segment");
+    }
+    if (segments.some((segment) => /\d+\s+[A-Z].*(?:AVE|BLVD|DR|HWY|RD|ST|STR|STRASSE)\b/.test(segment))) {
+      score += 15;
+      signals.push("street-like-segment");
+    }
+
+    // Prefer dictionary phrases over many isolated characters when coverage
+    // is otherwise equal. Penalize identifier-like gibberish inside words.
+    score += (decoded.tokens ?? []).reduce(
+      (total, token) => total + (token.length > 1 ? token.length - 1 : 0),
+      0,
+    );
+    for (const segment of segments) {
+      if (/^(?:[YN]\d+|\d{1,3}\/\d{0,3})$/.test(segment)) continue;
+      const mixedRuns = segment.match(/[A-Z]+\d+[A-Z\d]*|\d+[A-Z]+[A-Z\d]*/g) ?? [];
+      score -= mixedRuns.length * 6;
+    }
+
+    return { score, signals };
+  }
+
+  /** Extract schema-shaped hints without promoting them to verified fields. */
+  static extractRecoveryFieldCandidates(text) {
+    const candidate = (value, evidence) => ({
+      value,
+      status: "recovered-candidate",
+      evidence,
+    });
+    const segments = text.split(UpsMaxicodeDecoder.GS);
+    const fields = {};
+    const street = segments.find((segment) => (
+      /\d+\s+[A-Z].*(?:AVE|BLVD|DR|HWY|RD|ST|STR|STRASSE)\b/.test(segment)
+    ));
+    if (street) fields.street = candidate(street, "street-pattern");
+
+    const postalSegment = segments.find((segment) => /\b\d{5}(?:-\d{4})?\b/.test(segment));
+    const postal = postalSegment?.match(/\b\d{5}(?:-\d{4})?\b/)?.[0];
+    if (postal) fields.postalCode = candidate(postal, "postal-pattern-inside-segment");
+
+    const julian = segments.find((segment) => {
+      if (!/^\d{3}$/.test(segment)) return false;
+      const value = Number(segment);
+      return value >= 1 && value <= 366;
+    });
+    if (julian) fields.julianDayOfPickup = candidate(julian, "julian-day-range");
+
+    const combinedValidationWeight = segments
+      .map((segment) => /^([YN])(\d{1,10})$/.exec(segment))
+      .find(Boolean);
+    if (combinedValidationWeight) {
+      fields.addressValidation = candidate(
+        combinedValidationWeight[1],
+        "combined-validation-weight-segment",
+      );
+      fields.weightValue = candidate(
+        combinedValidationWeight[2],
+        "combined-validation-weight-segment",
+      );
+    }
+
+    const packageSegment = segments.find((segment) => /^\d{1,3}\/\d{0,3}$/.test(segment));
+    if (packageSegment) {
+      fields.packageInShipment = {
+        ...candidate(packageSegment, "package-count-pattern"),
+        complete: /^\d{1,3}\/\d{1,3}$/.test(packageSegment),
+      };
+    }
+    return fields;
   }
 
   /**

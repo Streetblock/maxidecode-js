@@ -110,3 +110,56 @@ test("resolves the patent table's OA/HWY prefix overlap by longest match", () =>
   assert.equal(hwy.bits.startsWith(oa.bits), true);
   assert.equal(hwy.bits.length > oa.bits.length, true);
 });
+
+test("keeps the Los Angeles vector unchanged unless recovery is requested", () => {
+  const vector = vectors.find((entry) => entry.name === "Los Angeles SurePost label");
+  const result = new UpsMaxicodeDecoder().decode(`07${vector.payload}`);
+
+  assert.equal(result.decoder.bitsConsumed, 120);
+  assert.equal(result.decoder.complete, false);
+  assert.equal("recovery" in result, false);
+});
+
+test("finds the bounded one-bit Los Angeles recovery candidate with provenance", () => {
+  const vector = vectors.find((entry) => entry.name === "Los Angeles SurePost label");
+  const result = new UpsMaxicodeDecoder().decode(`07${vector.payload}`, { recovery: true });
+  const recovery = result.recovery;
+
+  assert.equal(recovery.attempted, true);
+  assert.equal(recovery.applied, true);
+  assert.equal(recovery.mode, "single-bit-format07-chase");
+  assert.equal(recovery.confidence, "candidate");
+  assert.equal(recovery.reedSolomonVerified, false);
+  assert.equal(recovery.standardBitsConsumed, 120);
+  assert.equal(recovery.candidate.bitsConsumed, 244);
+  assert.equal(recovery.candidate.complete, false);
+  assert.equal(
+    recovery.candidate.decodedText,
+    `1\x1d\x1d3585 S VERMONT AVE\x1d\x1d\x1dUISLE 90006\x1d144\x1d\x1dN4\x1d1/`,
+  );
+  assert.deepEqual(recovery.candidate.changedBits, [{
+    payloadBitOffset: 124,
+    transportBitOffset: 128,
+    byteIndex: 16,
+    bitIndexFromMsb: 0,
+    from: 0,
+    to: 1,
+  }]);
+  assert.equal(recovery.candidate.fieldCandidates.street.value, "3585 S VERMONT AVE");
+  assert.equal(recovery.candidate.fieldCandidates.postalCode.value, "90006");
+  assert.equal(recovery.candidate.fieldCandidates.julianDayOfPickup.value, "144");
+  assert.equal(recovery.candidate.fieldCandidates.addressValidation.value, "N");
+  assert.equal(recovery.candidate.fieldCandidates.weightValue.value, "4");
+  assert.equal(recovery.candidate.fieldCandidates.packageInShipment.value, "1/");
+  assert.equal(recovery.candidate.fieldCandidates.packageInShipment.complete, false);
+});
+
+test("does not run one-bit recovery after a complete standard decode", () => {
+  const result = new UpsMaxicodeDecoder().decode(`07${vectors[0].payload}`, { recovery: true });
+
+  assert.deepEqual(result.recovery, {
+    attempted: false,
+    applied: false,
+    reason: "standard-decode-complete",
+  });
+});
