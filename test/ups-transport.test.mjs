@@ -61,6 +61,17 @@ const vectors = [
     bitsConsumed: 120,
     trailingBits: "000100111101111011011000011111000001011100100101100010111101001110111001101100001011001110111001100000001000101110100110011100000010",
   },
+  {
+    name: "Avery Monarch compressed MaxiCode sample",
+    // Avery 9800 Series Packet Reference Manual, Samples A-5. This is the
+    // coherent batch-data vector on the lower half of the printed page.
+    payload: "#P36 (AWO'$6,X3&W6HMJAL-7WK0 8YU,)92+'#I%\x1d#S\r",
+    hex: "1da2c192fcaa4cefde62944aa6da34796264e9baa6ef1236890b1133bb8bbfb7",
+    text: `\x1d\x1d1001 PARCEL LANE\x1dBUNDLE OFFICE PARK\x1dSUITE 500\x1dUPS\x1d348\x1dJA`,
+    complete: false,
+    bitsConsumed: 244,
+    trailingBits: "10110111",
+  },
 ];
 
 function toHex(bytes) {
@@ -109,6 +120,7 @@ for (const vector of vectors) {
     assert.equal(result.decoder.trailingBits, vector.trailingBits);
     assert.deepEqual(result.fields.segments, vector.text.split("\x1d"));
     assert.equal(result.fields.records.weightPounds.priority, 8);
+    assert.equal(result.fields.records.weightPounds.compressionIndex, 9);
     assert.equal(result.fields.records.weightPounds.source, "format07");
     const tracedRecords = Object.values(result.fields.records).filter((record) => record.bitRange);
     for (const record of tracedRecords) {
@@ -123,14 +135,15 @@ test("marks missing and truncated Format 07 slots without inventing values", () 
     transportDecoder: () => new Uint8Array(32),
     substitutionDecoder: () => ({ text: `STREET${UpsMaxicodeDecoder.GS}`, complete: true }),
   }).decode(`07${"A".repeat(45)}`);
-  assert.equal(completeShort.fields.records.shipToAddressLine1.status, "present");
-  assert.equal(completeShort.fields.records.shipToAddressLine2.status, "empty");
+  assert.equal(completeShort.fields.records.shipToCity.status, "present");
+  assert.equal(completeShort.fields.records.shipToState.status, "empty");
+  assert.equal(completeShort.fields.records.shipToAddressLine1.status, "unavailable");
   assert.equal(completeShort.fields.records.weightPounds.status, "unavailable");
   assert.equal(completeShort.fields.records.shipToAddressLine1.bitRange, null);
 
   const partial = new UpsMaxicodeDecoder({
     transportDecoder: () => new Uint8Array(32),
-    substitutionDecoder: () => ({ text: "STREET", complete: false }),
+    substitutionDecoder: () => ({ text: `${UpsMaxicodeDecoder.GS}${UpsMaxicodeDecoder.GS}STREET`, complete: false }),
   }).decode(`07${"A".repeat(45)}`);
   assert.equal(partial.fields.records.shipToAddressLine1.status, "partial");
   assert.equal(partial.fields.records.shipToAddressLine1.value, null);

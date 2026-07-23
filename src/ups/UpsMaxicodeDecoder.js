@@ -236,20 +236,23 @@ export class UpsMaxicodeDecoder {
    * Fig. 2 order when rebuilding the original interface string.
    */
   parseCompressionPriorityFields(text, { decoderComplete = true, tokenTrace = null } = {}) {
-    // Patent Table 1: the compressor serializes these fields in priority
-    // order. Keep the field-slot names even when a producer puts content in a
-    // slot that differs from its intended semantics.
-    const priorityOrder = [
-      "shipToAddressLine1",
-      "shipToAddressLine2",
-      "shipToAddressLine3",
-      "shipToAddressLine4",
-      "julianDayOfPickup",
-      "shipToAddressLine5",
-      "addressValidation",
-      "weightPounds",
-      "packageInShipment",
-      "shipmentId",
+    // Fig. 2 defines city and state as interface fields, but Table 1 assigns
+    // them no numeric compression priority. Independent UPS-compressed label
+    // vectors show that they prefix the Table 1 stream. Table 1 then supplies
+    // priorities 1-10 for the remaining fields.
+    const compressionOrder = [
+      { field: "shipToCity", priority: null },
+      { field: "shipToState", priority: null },
+      { field: "shipToAddressLine1", priority: 1 },
+      { field: "shipToAddressLine2", priority: 2 },
+      { field: "shipToAddressLine3", priority: 3 },
+      { field: "shipToAddressLine4", priority: 4 },
+      { field: "julianDayOfPickup", priority: 5 },
+      { field: "shipToAddressLine5", priority: 6 },
+      { field: "addressValidation", priority: 7 },
+      { field: "weightPounds", priority: 8 },
+      { field: "packageInShipment", priority: 9 },
+      { field: "shipmentId", priority: 10 },
     ];
     const validators = {
       julianDayOfPickup: /^\d{3}$/,
@@ -276,12 +279,12 @@ export class UpsMaxicodeDecoder {
       }
     }
     const unknown = [];
-    const values = Object.fromEntries(priorityOrder.map((field, index) => {
+    const values = Object.fromEntries(compressionOrder.map(({ field }, index) => {
       const raw = segments[index] ?? "";
       return [field, raw.trim().length ? raw : null];
     }));
     const identified = {};
-    const records = Object.fromEntries(priorityOrder.map((field, index) => {
+    const records = Object.fromEntries(compressionOrder.map(({ field, priority }, index) => {
       const available = index < segments.length;
       const raw = available ? segments[index] : null;
       const finalUndelimitedSegment = available && index === segments.length - 1 && !text.endsWith(UpsMaxicodeDecoder.GS);
@@ -303,7 +306,8 @@ export class UpsMaxicodeDecoder {
 
       return [field, {
         field,
-        priority: index + 1,
+        priority,
+        compressionIndex: index,
         raw,
         value: valid && !partial ? raw : null,
         status,
@@ -322,7 +326,7 @@ export class UpsMaxicodeDecoder {
         identified[field] = match[1];
       }
     }
-    for (const raw of segments.slice(priorityOrder.length)) {
+    for (const raw of segments.slice(compressionOrder.length)) {
       if (raw.trim().length > 0 && !/^(20L|21L|22L|23L)/s.test(raw)) unknown.push(raw);
     }
     return {

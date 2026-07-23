@@ -52,6 +52,8 @@ test("reads routing and compressed segments without losing payload controls", ()
     "KORSCHENBROICH",
     "JOHANN- GEORG- HALSKE- STRASSE 1",
   ]);
+  assert.equal(result.destination.city, "KORSCHENBROICH");
+  assert.equal(result.destination.addressLine1, "JOHANN- GEORG- HALSKE- STRASSE 1");
 });
 
 test("reports a carrier-neutral MaxiCode message as unrecognized", () => {
@@ -337,38 +339,23 @@ test("keeps invalid typed fields from a partial Format 07 decode out of the summ
   const result = new UpsMaxicodeReader().read(beverlyHillsMessage);
 
   assert.equal(result.compressed.decoder.complete, false);
-  assert.equal(result.compressed.fields.shipToAddressLine3, "905 LOMA VISTA DR");
-  assert.equal(result.compressed.fields.addressValidation, "50");
-  assert.equal(result.compressed.fields.weightPounds, "JOHN SMITH");
-  assert.deepEqual(result.compressed.fields.records.weightPounds, {
-    field: "weightPounds",
-    priority: 8,
-    raw: "JOHN SMITH",
-    value: null,
-    status: "invalid",
-    valid: false,
-    source: "format07",
-    terminatedByGs: true,
-    bitRange: {
-      payloadStart: 176,
-      payloadEnd: 233,
-      transportStart: 180,
-      transportEnd: 237,
-    },
-  });
+  assert.equal(result.compressed.fields.shipToAddressLine1, "905 LOMA VISTA DR");
+  assert.equal(result.compressed.fields.julianDayOfPickup, "50");
+  assert.equal(result.compressed.fields.shipToAddressLine5, "JOHN SMITH");
+  assert.equal(result.compressed.fields.records.weightPounds.status, "unavailable");
   assert.equal(result.destination.postalCodeFormatted, "90210");
-  assert.equal(result.destination.addressLine3, "905 LOMA VISTA DR");
+  assert.equal(result.destination.addressLine1, "905 LOMA VISTA DR");
   assert.equal(result.destination.addressValidation, null);
   assert.equal(result.shipment.weightValue, null);
   assert.equal(result.shipment.weightUnit, null);
   assert.deepEqual(result.shipment.weight, {
-    raw: "JOHN SMITH",
+    raw: null,
     value: null,
     normalizedValue: null,
     scale: null,
     unit: null,
     source: null,
-    status: "invalid",
+    status: "unavailable",
   });
   assert.equal(result.shipment.packageInShipment, null);
 });
@@ -384,10 +371,9 @@ test("reads the Honolulu Mode 2 sample without inventing a weight unit", () => {
   assert.equal(result.destination.postalCode, "968190000");
   assert.equal(result.destination.postalCodeFormatted, "96819");
   assert.equal(result.shipment.trackingNumber, "1Z0715X10190647079");
-  assert.equal(result.compressed.fields.shipToAddressLine1, "0");
-  assert.equal(result.destination.addressLine1, null);
-  assert.equal(result.destination.addressLine3, "123 BISHOP ROAD");
-  assert.equal(result.destination.addressLine5, "RECIPIENT COMPANY & SUCH");
+  assert.equal(result.compressed.fields.shipToCity, "0");
+  assert.equal(result.destination.addressLine1, "123 BISHOP ROAD");
+  assert.equal(result.destination.addressLine4, "RECIPIENT COMPANY & SUCH");
   assert.equal(result.shipment.packageInShipment, null);
   assert.equal(result.shipment.weightValue, null);
   assert.equal(result.shipment.weightUnit, null);
@@ -398,7 +384,7 @@ test("does not promote a syntactically valid but truncated Format 07 field", () 
   const format07Decoder = {
     decode() {
       const fields = new UpsMaxicodeReader().format07Decoder.parseAnsiFields(
-        ["STREET", "", "", "", "123"].join(GS),
+        ["CITY", "ST", "STREET", "", "", "", "123"].join(GS),
         { decoderComplete: false },
       );
       return { ok: true, fields, decoder: { complete: false } };
