@@ -188,6 +188,7 @@ export class UpsMaxicodeReader {
   buildStructuredFields({ primary, secondary, compressed, format05 }) {
     const compressedFields = compressed?.ok ? compressed.fields : null;
     const compressedWeight = compressedFields?.records?.weightPounds ?? null;
+    const compressedValue = (field) => compressedFields?.records?.[field]?.value ?? null;
     const choose = (...candidates) => candidates.find((value) => value != null && value !== "") ?? null;
     const chooseMatching = (pattern, ...candidates) => candidates.find((value) => (
       value != null && pattern.test(String(value))
@@ -201,11 +202,11 @@ export class UpsMaxicodeReader {
         ? compressedValue
         : null,
     );
-    const addressLine1 = chooseAddress(secondary.shipToStreet, compressedFields?.shipToAddressLine1);
-    const addressLine2 = chooseAddress(format05?.shipToAddressLine2, compressedFields?.shipToAddressLine2);
-    const addressLine3 = chooseAddress(format05?.shipToAddressLine3, compressedFields?.shipToAddressLine3);
-    const addressLine4 = chooseAddress(format05?.shipToAddressLine4, compressedFields?.shipToAddressLine4);
-    const addressLine5 = chooseAddress(format05?.shipToAddressLine5, compressedFields?.shipToAddressLine5);
+    const addressLine1 = chooseAddress(secondary.shipToStreet, compressedValue("shipToAddressLine1"));
+    const addressLine2 = chooseAddress(format05?.shipToAddressLine2, compressedValue("shipToAddressLine2"));
+    const addressLine3 = chooseAddress(format05?.shipToAddressLine3, compressedValue("shipToAddressLine3"));
+    const addressLine4 = chooseAddress(format05?.shipToAddressLine4, compressedValue("shipToAddressLine4"));
+    const addressLine5 = chooseAddress(format05?.shipToAddressLine5, compressedValue("shipToAddressLine5"));
 
     const uncompressedWeight = /^\d{1,10}$/.test(String(secondary.weightPounds ?? ""))
       ? secondary.weightPounds
@@ -241,7 +242,7 @@ export class UpsMaxicodeReader {
         addressValidation: chooseMatching(
           /^[YN]$/,
           secondary.addressValidation,
-          compressedFields?.addressValidation,
+          compressedValue("addressValidation"),
         ),
       },
       shipment: {
@@ -253,13 +254,13 @@ export class UpsMaxicodeReader {
         julianDayOfPickup: chooseMatching(
           /^\d{3}$/,
           secondary.julianDayOfPickup,
-          compressedFields?.julianDayOfPickup,
+          compressedValue("julianDayOfPickup"),
         ),
-        shipmentId: choose(secondary.shipmentId, compressedFields?.shipmentId),
+        shipmentId: choose(secondary.shipmentId, compressedValue("shipmentId")),
         packageInShipment: chooseMatching(
           /^\d{1,3}\/\d{1,3}$/,
           secondary.packageInShipment,
-          compressedFields?.packageInShipment,
+          compressedValue("packageInShipment"),
         ),
         // UPS Table 1 names this field only "Weight" and does not carry a
         // unit alongside the numeric value. The printed label may use lb or

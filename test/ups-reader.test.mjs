@@ -394,6 +394,24 @@ test("reads the Honolulu Mode 2 sample without inventing a weight unit", () => {
   assert.equal(result.compressed.decoder.complete, false);
 });
 
+test("does not promote a syntactically valid but truncated Format 07 field", () => {
+  const format07Decoder = {
+    decode() {
+      const fields = new UpsMaxicodeReader().format07Decoder.parseAnsiFields(
+        ["STREET", "", "", "", "123"].join(GS),
+        { decoderComplete: false },
+      );
+      return { ok: true, fields, decoder: { complete: false } };
+    },
+  };
+  const reader = new UpsMaxicodeReader({ format07Decoder });
+  const result = reader.read(`${message.slice(0, message.indexOf(`${RS}07`))}${RS}07${"A".repeat(45)}${RS}${EOT}`);
+
+  assert.equal(result.compressed.fields.records.julianDayOfPickup.raw, "123");
+  assert.equal(result.compressed.fields.records.julianDayOfPickup.status, "partial");
+  assert.equal(result.shipment.julianDayOfPickup, null);
+});
+
 test("recovers the headerless, mispacked Mode 3 message from label 66034", () => {
   const malformedMessage = [
     `352 )${RS}${GS}641`,
