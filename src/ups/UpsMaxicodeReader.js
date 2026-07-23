@@ -25,6 +25,10 @@ export class UpsMaxicodeReader {
       .split(UpsMaxicodeReader.RS)
       .map((segment) => segment.replaceAll(UpsMaxicodeReader.EOT, ""));
     const hasStructuredHeader = segments[0] === UpsMaxicodeReader.HEADER;
+    const hasMessageTrailer = message.endsWith(
+      `${UpsMaxicodeReader.RS}${UpsMaxicodeReader.EOT}`,
+    );
+    const hasStandardEnvelope = hasStructuredHeader && hasMessageTrailer;
     const routingSegment = segments.find((segment) => segment.startsWith("01"));
     const compressedSegment = segments.find((segment) => segment.startsWith("07"));
 
@@ -33,7 +37,7 @@ export class UpsMaxicodeReader {
       if (recovered) return recovered;
       return {
         recognized: false,
-        standardEnvelope: hasStructuredHeader,
+        standardEnvelope: hasStandardEnvelope,
         reason: "No UPS 01 routing segment found.",
         format01Header: null,
         primary: null,
@@ -51,9 +55,16 @@ export class UpsMaxicodeReader {
       compressed,
       format05,
     });
+    const validation = this.validateMessage({
+      hasStructuredHeader,
+      hasMessageTrailer,
+      secondary: routing.secondary,
+    });
     return {
       recognized: true,
-      standardEnvelope: hasStructuredHeader,
+      standardEnvelope: hasStandardEnvelope,
+      status: validation.status,
+      warnings: validation.warnings,
       format: "01",
       format01Header: routing.format01Header,
       primary: routing.primary,
@@ -61,6 +72,39 @@ export class UpsMaxicodeReader {
       compressed,
       format05,
       ...structured,
+    };
+  }
+
+  validateMessage({ hasStructuredHeader, hasMessageTrailer, secondary }) {
+    const warnings = [];
+    const state = secondary.shipToState;
+    const unexpectedFields = secondary.unknownFields.filter((value) => value !== "");
+
+    if (state != null && !/^[A-Z]{2}$/.test(state)) {
+      warnings.push("Format 01 state must contain exactly two uppercase letters.");
+    }
+    if (!hasStructuredHeader) {
+      warnings.push("ANSI structured-message header [)><RS> is missing.");
+    }
+    if (!hasMessageTrailer) {
+      warnings.push("ANSI message trailer <RS><EOT> is missing.");
+    }
+    if (unexpectedFields.length) {
+      warnings.push(
+        `${unexpectedFields.length} unexpected field(s) follow the Format 01 state field.`,
+      );
+    }
+    if (hasStructuredHeader && !hasMessageTrailer) {
+      warnings.push("The MaxiCode payload appears truncated before the ANSI message trailer.");
+    }
+
+    return {
+      status: !hasMessageTrailer
+        ? "truncated"
+        : warnings.length
+          ? "malformed"
+          : "valid",
+      warnings,
     };
   }
 
@@ -232,7 +276,11 @@ export class UpsMaxicodeReader {
         postalCodeFormatted: this.formatPostalCode(primary.postalCode, primary.countryCode),
         countryCode: primary.countryCode || null,
         city: choose(secondary.shipToCity, compressedValue("shipToCity")),
-        state: choose(secondary.shipToState, compressedValue("shipToState")),
+        state: chooseMatching(
+          /^[A-Z]{2}$/,
+          secondary.shipToState,
+          compressedValue("shipToState"),
+        ),
         addressLine1,
         addressLine2,
         addressLine3,

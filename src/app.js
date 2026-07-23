@@ -302,6 +302,7 @@ function updateUIFromAnalysis(analysis) {
 
   const confidencePct = Math.round((analysis.confidence ?? 0) * 1000) / 10;
   const recoveryMode = Boolean(analysis.ups?.variant || analysis.ups?.primary?.recovered);
+  const truncatedMessage = analysis.ups?.status === "truncated";
   let statusKind = analysis.decode?.decoded ? "live" : confidencePct >= 65 ? "warn" : "bad";
   let pillText = analysis.decode?.decoded ? "Decoded" : "Analyzed";
   let statusText = analysis.decode?.decoded
@@ -311,6 +312,10 @@ function updateUIFromAnalysis(analysis) {
     statusKind = "warn";
     pillText = "Recovery mode";
     statusText = "Recovered · review";
+  } else if (truncatedMessage) {
+    statusKind = "warn";
+    pillText = "Truncated message";
+    statusText = "Decoded · truncated";
   }
 
   setStatus(statusKind, statusText);
