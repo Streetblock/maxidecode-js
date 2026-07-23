@@ -299,7 +299,33 @@ test("formats a US nine-digit Mode 2 postal code as ZIP+4", () => {
 
   assert.equal(reader.formatPostalCode("954075421", "840"), "95407-5421");
   assert.equal(reader.formatPostalCode("954075421", "250"), "954075421");
+  assert.equal(reader.formatPostalCode("902100000", "840"), "90210");
   assert.equal(reader.formatPostalCode("54250", "250"), "54250");
+});
+
+test("keeps invalid typed fields from a partial Format 07 decode out of the summary", () => {
+  const beverlyHillsPayload = "\rZ\x1cS%XYTSINGVN$3Q S/2G(+:P%2(\"5TW. 3FB\x1dM)3$S\r";
+  const beverlyHillsMessage = [
+    `[)>${RS}01`,
+    "96902100000",
+    "840",
+    "004",
+    "1Z95524105",
+    "UPSN",
+    "A66899",
+  ].join(GS) + `${RS}07${beverlyHillsPayload}${RS}${EOT}`;
+
+  const result = new UpsMaxicodeReader().read(beverlyHillsMessage);
+
+  assert.equal(result.compressed.decoder.complete, false);
+  assert.equal(result.compressed.fields.shipToAddressLine3, "905 LOMA VISTA DR");
+  assert.equal(result.compressed.fields.addressValidation, "50");
+  assert.equal(result.compressed.fields.weightPounds, "JOHN SMITH");
+  assert.equal(result.destination.postalCodeFormatted, "90210");
+  assert.equal(result.destination.addressLine3, "905 LOMA VISTA DR");
+  assert.equal(result.destination.addressValidation, null);
+  assert.equal(result.shipment.weightPounds, null);
+  assert.equal(result.shipment.packageInShipment, null);
 });
 
 test("recovers the headerless, mispacked Mode 3 message from label 66034", () => {
