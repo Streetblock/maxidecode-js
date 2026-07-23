@@ -188,6 +188,9 @@ export class UpsMaxicodeReader {
   buildStructuredFields({ primary, secondary, compressed, format05 }) {
     const compressedFields = compressed?.ok ? compressed.fields : null;
     const choose = (...candidates) => candidates.find((value) => value != null && value !== "") ?? null;
+    const chooseMatching = (pattern, ...candidates) => candidates.find((value) => (
+      value != null && pattern.test(String(value))
+    )) ?? null;
     const addressLine1 = choose(secondary.shipToStreet, compressedFields?.shipToAddressLine1);
     const addressLine2 = choose(format05?.shipToAddressLine2, compressedFields?.shipToAddressLine2);
     const addressLine3 = choose(format05?.shipToAddressLine3, compressedFields?.shipToAddressLine3);
@@ -207,7 +210,11 @@ export class UpsMaxicodeReader {
         addressLine4,
         addressLine5,
         addressLines: [addressLine1, addressLine2, addressLine3, addressLine4, addressLine5],
-        addressValidation: choose(secondary.addressValidation, compressedFields?.addressValidation),
+        addressValidation: chooseMatching(
+          /^[YN]$/,
+          secondary.addressValidation,
+          compressedFields?.addressValidation,
+        ),
       },
       shipment: {
         trackingNumber: secondary.trackingNumberReconstructed
@@ -215,16 +222,22 @@ export class UpsMaxicodeReader {
           || null,
         scac: secondary.scac || null,
         shipperId: secondary.shipperId || null,
-        julianDayOfPickup: choose(
+        julianDayOfPickup: chooseMatching(
+          /^\d{3}$/,
           secondary.julianDayOfPickup,
           compressedFields?.julianDayOfPickup,
         ),
         shipmentId: choose(secondary.shipmentId, compressedFields?.shipmentId),
-        packageInShipment: choose(
+        packageInShipment: chooseMatching(
+          /^\d{1,3}\/\d{1,3}$/,
           secondary.packageInShipment,
           compressedFields?.packageInShipment,
         ),
-        weightPounds: choose(secondary.weightPounds, compressedFields?.weightPounds),
+        weightPounds: chooseMatching(
+          /^\d{1,10}$/,
+          secondary.weightPounds,
+          compressedFields?.weightPounds,
+        ),
       },
     };
   }
@@ -235,7 +248,9 @@ export class UpsMaxicodeReader {
     // States (ISO numeric 840), render that field using conventional ZIP+4
     // punctuation while preserving the encoded digits separately.
     if (countryCode === "840" && /^\d{9}$/.test(postal)) {
-      return `${postal.slice(0, 5)}-${postal.slice(5)}`;
+      return postal.endsWith("0000")
+        ? postal.slice(0, 5)
+        : `${postal.slice(0, 5)}-${postal.slice(5)}`;
     }
     return postal || null;
   }
