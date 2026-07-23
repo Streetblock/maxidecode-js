@@ -329,9 +329,13 @@ function updateUIFromAnalysis(analysis) {
   els.sourceLabel.textContent = state.sourceName || `${analysis.sourceWidth} x ${analysis.sourceHeight}`;
   updateUpsSummary(analysis.ups);
   if (analysis.ups?.recognized) {
+    const secondaryText = analysis.decode.secondaryText ?? analysis.decode.text;
     els.decodedText.textContent = [
-      "Raw MaxiCode message",
-      visibleControls(analysis.decode.text),
+      "Raw Secondary Message",
+      visibleControls(secondaryText),
+      "",
+      "Reconstructed ANSI message",
+      visibleControls(analysis.decode.ansiText ?? secondaryText),
       "",
       "UPS interpretation",
       formatUpsResult(analysis.ups),
@@ -341,7 +345,8 @@ function updateUIFromAnalysis(analysis) {
       ? visibleControls(analysis.decode.text)
       : analysis.decode?.error || "No readable payload found.";
   }
-  els.rawMessage.textContent = analysis.decode?.text ? visibleControls(analysis.decode.text) : "-";
+  const rawDecodedMessage = analysis.decode?.secondaryText ?? analysis.decode?.text;
+  els.rawMessage.textContent = rawDecodedMessage ? visibleControls(rawDecodedMessage) : "-";
   const rotation = Math.round((analysis.decode?.rotation || 0) * 10) / 10;
   els.modeValue.textContent = analysis.decode?.mode
     ? `Mode ${analysis.decode.mode} · ${rotation}°`
@@ -396,9 +401,10 @@ function scanSource() {
     maxRoiCandidates: state.sourceKind === "camera" ? 2 : 6,
   });
   let ups = null;
-  if (decode.decoded && decode.text) {
+  const carrierMessage = decode.ansiText ?? decode.text;
+  if (decode.decoded && carrierMessage) {
     try {
-      ups = upsReader.read(decode.text);
+      ups = upsReader.read(carrierMessage);
     } catch (error) {
       ups = { recognized: false, error: error?.message || String(error) };
     }
@@ -643,7 +649,7 @@ async function handlePaste(event) {
 }
 
 async function copyResult() {
-  const text = state.analysis?.decode?.text;
+  const text = state.analysis?.decode?.secondaryText ?? state.analysis?.decode?.text;
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
