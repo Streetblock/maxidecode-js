@@ -323,13 +323,16 @@ function updateUIFromAnalysis(analysis) {
   const thresholdNote = analysis.threshold !== AUTO_THRESHOLD_CANDIDATES[0]
     ? ` Auto-selected threshold ${analysis.threshold}.`
     : "";
+  const regionNote = analysis.scanRegion
+    ? ` Recovered by rescanning a ${analysis.scanRegion.width} x ${analysis.scanRegion.height} region around the bullseye.`
+    : "";
   els.resultNote.textContent = (analysis.decode?.decoded
     ? state.phase === "decoded" && analysis.sourceKind === "camera"
       ? `Decoded locally. The successful camera frame is frozen (${analysis.sourceWidth} x ${analysis.sourceHeight}).`
       : `Decoded locally in the browser. Source: ${analysis.sourceWidth} x ${analysis.sourceHeight}.`
     : analysis.center.found
       ? analysis.decode?.error || "Bullseye found, but the payload is not fully readable yet."
-      : "No MaxiCode bullseye found in this frame.") + recoveryNote + thresholdNote;
+      : "No MaxiCode bullseye found in this frame.") + recoveryNote + thresholdNote + regionNote;
   els.idleState.hidden = true;
   drawFrame(analysis);
 }
@@ -345,9 +348,13 @@ function scanSource() {
   const thresholds = state.sourceKind === "camera"
     ? [AUTO_THRESHOLD_CANDIDATES[state.thresholdAttempt % AUTO_THRESHOLD_CANDIDATES.length]]
     : AUTO_THRESHOLD_CANDIDATES;
+  const roiRetry = state.sourceKind !== "camera"
+    || state.thresholdAttempt % AUTO_THRESHOLD_CANDIDATES.length === AUTO_THRESHOLD_CANDIDATES.length - 1;
   state.thresholdAttempt += 1;
-  const { center, pitch, cells, decode, threshold, attempts } = scanWithThresholds(imageData, {
+  const { center, pitch, cells, decode, threshold, attempts, scanRegion } = scanWithThresholds(imageData, {
     thresholds,
+    roiRetry,
+    maxRoiCandidates: state.sourceKind === "camera" ? 2 : 6,
   });
   let ups = null;
   if (decode.decoded && decode.text) {
@@ -368,6 +375,7 @@ function scanSource() {
     decode,
     threshold,
     thresholdAttempts: attempts,
+    scanRegion,
     ups,
     confidence,
     sourceKind: state.sourceKind,
