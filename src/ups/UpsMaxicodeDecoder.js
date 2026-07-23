@@ -212,23 +212,49 @@ export class UpsMaxicodeDecoder {
    * Unknown identifiers are retained rather than discarded.
    */
   parseAnsiFields(text) {
-    const known = {
-      "20": "shipToAddressLine2",
-      "21": "shipToAddressLine3",
-      "22": "shipToAddressLine4",
-      "23": "shipToAddressLine5"
+    // Patent Table 1: the compressor serializes these fields in priority
+    // order. Keep the field-slot names even when a producer puts content in a
+    // slot that differs from its intended semantics.
+    const priorityOrder = [
+      "shipToAddressLine1",
+      "shipToAddressLine2",
+      "shipToAddressLine3",
+      "shipToAddressLine4",
+      "julianDayOfPickup",
+      "shipToAddressLine5",
+      "addressValidation",
+      "weightPounds",
+      "packageInShipment",
+      "shipmentId",
+    ];
+    const identifiers = {
+      "20L": "shipToAddressLine2",
+      "21L": "shipToAddressLine3",
+      "22L": "shipToAddressLine4",
+      "23L": "shipToAddressLine5",
     };
-    const values = {};
     const segments = text.split(UpsMaxicodeDecoder.GS);
     const unknown = [];
+    const values = Object.fromEntries(priorityOrder.map((field, index) => {
+      const raw = segments[index] ?? "";
+      return [field, raw.trim().length ? raw : null];
+    }));
+    const identified = {};
 
-    for (const raw of segments.filter(Boolean)) {
-      const match = /^(20|21|22|23)(.*)$/s.exec(raw);
-      if (match) values[known[match[1]]] = match[2];
-      else unknown.push(raw);
+    for (const raw of segments.filter((segment) => segment.trim().length > 0)) {
+      const match = /^(20L|21L|22L|23L)(.*)$/s.exec(raw);
+      if (match) {
+        const field = identifiers[match[1]];
+        values[field] = match[2] || null;
+        identified[field] = match[1];
+      }
+    }
+    for (const raw of segments.slice(priorityOrder.length)) {
+      if (raw.trim().length > 0 && !/^(20L|21L|22L|23L)/s.test(raw)) unknown.push(raw);
     }
     return {
       ...values,
+      identified,
       segments,
       nonEmptySegments: segments.filter((segment) => segment.trim().length > 0),
       unknown,

@@ -197,6 +197,109 @@ test("parses the IDAutomation uncompressed UPS golden message", () => {
   assert.equal(result.secondary.shipToState, "FL");
   assert.deepEqual(result.secondary.unknownFields, []);
   assert.equal(result.compressed, null);
+  assert.equal(result.destination.postalCode, "336091062");
+  assert.equal(result.destination.postalCodeFormatted, "33609-1062");
+});
+
+test("structures the uncompressed fields from the French label", () => {
+  const franceMessage = [
+    `[)>${RS}01`,
+    "9654250",
+    "250",
+    "068",
+    "1Z84355950",
+    "UPSN",
+    "E77J06",
+    "237",
+    "",
+    "1/1",
+    "1",
+    "N",
+    "",
+    "CHAMPIGNEULLES",
+    "",
+  ].join(GS) + RS + EOT;
+
+  const result = new UpsMaxicodeReader().read(franceMessage);
+
+  assert.deepEqual(result.destination, {
+    postalCode: "54250",
+    postalCodeFormatted: "54250",
+    countryCode: "250",
+    city: "CHAMPIGNEULLES",
+    state: null,
+    addressLine1: null,
+    addressLine2: null,
+    addressLine3: null,
+    addressLine4: null,
+    addressLine5: null,
+    addressLines: [null, null, null, null, null],
+    addressValidation: "N",
+  });
+  assert.deepEqual(result.shipment, {
+    trackingNumber: "1ZE77J066884355950",
+    scac: "UPSN",
+    shipperId: "E77J06",
+    julianDayOfPickup: "237",
+    shipmentId: null,
+    packageInShipment: "1/1",
+    weightPounds: "1",
+  });
+  assert.equal(result.compressed, null);
+});
+
+test("maps Format 05 application identifiers to address lines 2 through 5", () => {
+  const routingWithAddressLine1 = [
+    "01",
+    "96336091062",
+    "840",
+    "002",
+    "1Z14647438",
+    "UPSN",
+    "410E1W",
+    "195",
+    "",
+    "1/1",
+    "",
+    "Y",
+    "135 LIGHTNER",
+    "TAMPA",
+    "FL",
+  ].join(GS);
+  const format05 = [
+    "05",
+    "20LSUITE 2",
+    "21LRECEIVING",
+    "22LEXAMPLE CORP",
+    "23LATTN SAM SMITH",
+  ].join(GS);
+
+  const result = new UpsMaxicodeReader().read(
+    `[)>${RS}${routingWithAddressLine1}${RS}${format05}${RS}${EOT}`,
+  );
+
+  assert.deepEqual(result.destination.addressLines, [
+    "135 LIGHTNER",
+    "SUITE 2",
+    "RECEIVING",
+    "EXAMPLE CORP",
+    "ATTN SAM SMITH",
+  ]);
+  assert.deepEqual(result.format05, {
+    shipToAddressLine2: "SUITE 2",
+    shipToAddressLine3: "RECEIVING",
+    shipToAddressLine4: "EXAMPLE CORP",
+    shipToAddressLine5: "ATTN SAM SMITH",
+    unknownFields: [],
+  });
+});
+
+test("formats a US nine-digit Mode 2 postal code as ZIP+4", () => {
+  const reader = new UpsMaxicodeReader();
+
+  assert.equal(reader.formatPostalCode("954075421", "840"), "95407-5421");
+  assert.equal(reader.formatPostalCode("954075421", "250"), "954075421");
+  assert.equal(reader.formatPostalCode("54250", "250"), "54250");
 });
 
 test("recovers the headerless, mispacked Mode 3 message from label 66034", () => {
