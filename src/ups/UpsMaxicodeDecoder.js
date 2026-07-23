@@ -166,11 +166,15 @@ export class UpsMaxicodeDecoder {
       header: {
         bits: decoded.headerBits,
         value: decoded.headerValue,
-        truncation: "unknown: US7039496B2 does not disclose the flag's bit layout",
+        truncationFlag: null,
+        interpretation: "unknown: US7039496B2 does not disclose the flag's bit layout",
       },
-      truncation: "unknown: header bit layout is not disclosed by US7039496B2",
+      sourceTruncation: {
+        status: "unknown",
+        reason: "The four framing bits are isolated, but their truncation-flag layout is not disclosed by US7039496B2.",
+      },
       decodedText: decoded.text,
-      fields: this.parseAnsiFields(decoded.text, {
+      fields: this.parseCompressionPriorityFields(decoded.text, {
         decoderComplete: decoded.complete,
         tokenTrace: decoded.tokenTrace,
       }),
@@ -179,6 +183,7 @@ export class UpsMaxicodeDecoder {
         bitsAvailable: decoded.bitsAvailable,
         trailingBits: decoded.trailingBits,
         complete: decoded.complete,
+        substitutionStatus: decoded.complete ? "expanded" : "unresolved-tail",
         reason: decoded.reason,
         interoperabilityAssumptions: [
           "32-byte stream is read most-significant bit first",
@@ -222,10 +227,15 @@ export class UpsMaxicodeDecoder {
   }
 
   /**
-   * Best-effort representation of the GS-separated fields shown in Fig. 2.
-   * Unknown identifiers are retained rather than discarded.
+   * Parse the GS-separated stream in the compressor's priority order.
+   *
+   * Fig. 2 shows the ANSI interface order (weight before the street address).
+   * Table 1 separately requires the compressor to read selected fields in
+   * priority order (address line 1 first, shipment ID last). Format 07 stores
+   * that reordered stream; a full decompressor would put the fields back into
+   * Fig. 2 order when rebuilding the original interface string.
    */
-  parseAnsiFields(text, { decoderComplete = true, tokenTrace = null } = {}) {
+  parseCompressionPriorityFields(text, { decoderComplete = true, tokenTrace = null } = {}) {
     // Patent Table 1: the compressor serializes these fields in priority
     // order. Keep the field-slot names even when a producer puts content in a
     // slot that differs from its intended semantics.
@@ -326,6 +336,11 @@ export class UpsMaxicodeDecoder {
       nonEmptySegments: segments.filter((segment) => segment.trim().length > 0),
       unknown,
     };
+  }
+
+  /** Backward-compatible alias retained for API consumers. */
+  parseAnsiFields(text, options = {}) {
+    return this.parseCompressionPriorityFields(text, options);
   }
 
   #parseEnvelope(value) {

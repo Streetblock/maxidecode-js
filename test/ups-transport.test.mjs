@@ -91,8 +91,17 @@ for (const vector of vectors) {
     assert.deepEqual(result.header, {
       bits: "0001",
       value: 1,
-      truncation: "unknown: US7039496B2 does not disclose the flag's bit layout",
+      truncationFlag: null,
+      interpretation: "unknown: US7039496B2 does not disclose the flag's bit layout",
     });
+    assert.deepEqual(result.sourceTruncation, {
+      status: "unknown",
+      reason: "The four framing bits are isolated, but their truncation-flag layout is not disclosed by US7039496B2.",
+    });
+    assert.equal(
+      result.decoder.substitutionStatus,
+      vector.complete ? "expanded" : "unresolved-tail",
+    );
     assert.equal(result.decodedText, vector.text);
     assert.equal(result.decoder.complete, vector.complete);
     assert.equal(result.decoder.bitsConsumed, vector.bitsConsumed);
