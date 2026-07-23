@@ -243,7 +243,8 @@ test("structures the uncompressed fields from the French label", () => {
     julianDayOfPickup: "237",
     shipmentId: null,
     packageInShipment: "1/1",
-    weightPounds: "1",
+    weightValue: "1",
+    weightUnit: null,
   });
   assert.equal(result.compressed, null);
 });
@@ -324,8 +325,30 @@ test("keeps invalid typed fields from a partial Format 07 decode out of the summ
   assert.equal(result.destination.postalCodeFormatted, "90210");
   assert.equal(result.destination.addressLine3, "905 LOMA VISTA DR");
   assert.equal(result.destination.addressValidation, null);
-  assert.equal(result.shipment.weightPounds, null);
+  assert.equal(result.shipment.weightValue, null);
+  assert.equal(result.shipment.weightUnit, null);
   assert.equal(result.shipment.packageInShipment, null);
+});
+
+test("reads the Honolulu Mode 2 sample without inventing a weight unit", () => {
+  const message = "[)>\x1e01\x1d96968190000\x1d840\x1d001\x1d1Z90647079"
+    + "\x1dUPSN\x1d0715X1\x1e07'Z\x1cA 1/1SN7-V.33\x1d"
+    + "O4/MWH/6#+PI-QSK#3(AJ*7KZLP\r\x1e\x04";
+
+  const result = new UpsMaxicodeReader().read(message);
+
+  assert.equal(result.recognized, true);
+  assert.equal(result.destination.postalCode, "968190000");
+  assert.equal(result.destination.postalCodeFormatted, "96819");
+  assert.equal(result.shipment.trackingNumber, "1Z0715X10190647079");
+  assert.equal(result.compressed.fields.shipToAddressLine1, "0");
+  assert.equal(result.destination.addressLine1, null);
+  assert.equal(result.destination.addressLine3, "123 BISHOP ROAD");
+  assert.equal(result.destination.addressLine5, "RECIPIENT COMPANY & SUCH");
+  assert.equal(result.shipment.packageInShipment, null);
+  assert.equal(result.shipment.weightValue, null);
+  assert.equal(result.shipment.weightUnit, null);
+  assert.equal(result.compressed.decoder.complete, false);
 });
 
 test("recovers the headerless, mispacked Mode 3 message from label 66034", () => {

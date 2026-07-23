@@ -191,11 +191,20 @@ export class UpsMaxicodeReader {
     const chooseMatching = (pattern, ...candidates) => candidates.find((value) => (
       value != null && pattern.test(String(value))
     )) ?? null;
-    const addressLine1 = choose(secondary.shipToStreet, compressedFields?.shipToAddressLine1);
-    const addressLine2 = choose(format05?.shipToAddressLine2, compressedFields?.shipToAddressLine2);
-    const addressLine3 = choose(format05?.shipToAddressLine3, compressedFields?.shipToAddressLine3);
-    const addressLine4 = choose(format05?.shipToAddressLine4, compressedFields?.shipToAddressLine4);
-    const addressLine5 = choose(format05?.shipToAddressLine5, compressedFields?.shipToAddressLine5);
+    // Explicit ANSI / Format 05 fields are self-identifying. Positional
+    // Format 07 output can be truncated, so do not promote a lone fragment
+    // such as "0" into the structured address summary.
+    const chooseAddress = (explicit, compressedValue) => choose(
+      explicit,
+      typeof compressedValue === "string" && compressedValue.trim().length >= 2
+        ? compressedValue
+        : null,
+    );
+    const addressLine1 = chooseAddress(secondary.shipToStreet, compressedFields?.shipToAddressLine1);
+    const addressLine2 = chooseAddress(format05?.shipToAddressLine2, compressedFields?.shipToAddressLine2);
+    const addressLine3 = chooseAddress(format05?.shipToAddressLine3, compressedFields?.shipToAddressLine3);
+    const addressLine4 = chooseAddress(format05?.shipToAddressLine4, compressedFields?.shipToAddressLine4);
+    const addressLine5 = chooseAddress(format05?.shipToAddressLine5, compressedFields?.shipToAddressLine5);
 
     return {
       destination: {
@@ -233,11 +242,15 @@ export class UpsMaxicodeReader {
           secondary.packageInShipment,
           compressedFields?.packageInShipment,
         ),
-        weightPounds: chooseMatching(
+        // UPS Table 1 names this field only "Weight" and does not carry a
+        // unit alongside the numeric value. The printed label may use lb or
+        // kg, so the structured API must not guess the unit.
+        weightValue: chooseMatching(
           /^\d{1,10}$/,
           secondary.weightPounds,
           compressedFields?.weightPounds,
         ),
+        weightUnit: null,
       },
     };
   }
