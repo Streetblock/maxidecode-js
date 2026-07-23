@@ -99,8 +99,33 @@ for (const vector of vectors) {
     assert.equal(result.decoder.bitsAvailable, 252);
     assert.equal(result.decoder.trailingBits, vector.trailingBits);
     assert.deepEqual(result.fields.segments, vector.text.split("\x1d"));
+    assert.equal(result.fields.records.weightPounds.priority, 8);
+    assert.equal(result.fields.records.weightPounds.source, "format07");
+    const tracedRecords = Object.values(result.fields.records).filter((record) => record.bitRange);
+    for (const record of tracedRecords) {
+      assert.equal(record.bitRange.transportStart, record.bitRange.payloadStart + 4);
+      assert.equal(record.bitRange.transportEnd, record.bitRange.payloadEnd + 4);
+    }
   });
 }
+
+test("marks missing and truncated Format 07 slots without inventing values", () => {
+  const completeShort = new UpsMaxicodeDecoder({
+    transportDecoder: () => new Uint8Array(32),
+    substitutionDecoder: () => ({ text: `STREET${UpsMaxicodeDecoder.GS}`, complete: true }),
+  }).decode(`07${"A".repeat(45)}`);
+  assert.equal(completeShort.fields.records.shipToAddressLine1.status, "present");
+  assert.equal(completeShort.fields.records.shipToAddressLine2.status, "empty");
+  assert.equal(completeShort.fields.records.weightPounds.status, "unavailable");
+  assert.equal(completeShort.fields.records.shipToAddressLine1.bitRange, null);
+
+  const partial = new UpsMaxicodeDecoder({
+    transportDecoder: () => new Uint8Array(32),
+    substitutionDecoder: () => ({ text: "STREET", complete: false }),
+  }).decode(`07${"A".repeat(45)}`);
+  assert.equal(partial.fields.records.shipToAddressLine1.status, "partial");
+  assert.equal(partial.fields.records.shipToAddressLine1.value, null);
+});
 
 test("resolves the patent table's OA/HWY prefix overlap by longest match", () => {
   const dictionary = UpsMaxicodeDecoder.FORMAT_07_DICTIONARY;

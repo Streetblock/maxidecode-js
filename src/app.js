@@ -29,6 +29,7 @@ const els = {
   upsPackage: document.getElementById("upsPackage"),
   upsWeight: document.getElementById("upsWeight"),
   upsWeightUnit: document.getElementById("upsWeightUnit"),
+  upsWeightStatus: document.getElementById("upsWeightStatus"),
   modeValue: document.getElementById("modeValue"),
   centerValue: document.getElementById("centerValue"),
   pitchValue: document.getElementById("pitchValue"),
@@ -107,6 +108,16 @@ function updateUpsSummary(ups) {
   els.upsPackage.textContent = ups.shipment.packageInShipment || "-";
   els.upsWeight.textContent = ups.shipment.weightValue || "-";
   els.upsWeightUnit.textContent = ups.shipment.weightUnit || "Not encoded";
+  const weightStatusLabels = {
+    present: ups.shipment.weight?.source === "format07"
+      ? "Present in Format 07"
+      : "Present in Format 01",
+    "not-encoded": "Not encoded",
+    unavailable: "Not reached / unavailable",
+    partial: "Partial Format 07 field",
+    invalid: "Invalid Format 07 slot",
+  };
+  els.upsWeightStatus.textContent = weightStatusLabels[ups.shipment.weight?.status] || "Unknown";
 }
 
 function formatUpsResult(ups) {
