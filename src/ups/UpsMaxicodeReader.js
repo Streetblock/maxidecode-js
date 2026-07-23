@@ -16,7 +16,7 @@ export class UpsMaxicodeReader {
     this.format07Decoder = format07Decoder;
   }
 
-  read(message) {
+  read(message, { format07Recovery = false } = {}) {
     if (typeof message !== "string") {
       throw new TypeError("MaxiCode message must be a string.");
     }
@@ -43,7 +43,9 @@ export class UpsMaxicodeReader {
     }
 
     const routing = this.parseRoutingSegment(routingSegment);
-    const compressed = compressedSegment ? this.format07Decoder.decode(compressedSegment) : null;
+    const compressed = compressedSegment
+      ? this.format07Decoder.decode(compressedSegment, { recovery: format07Recovery })
+      : null;
     const format05 = this.parseFormat05Segments(segments.filter((segment) => segment.startsWith("05")));
     const structured = this.buildStructuredFields({
       primary: routing.primary,

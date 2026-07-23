@@ -351,6 +351,31 @@ test("reads the Honolulu Mode 2 sample without inventing a weight unit", () => {
   assert.equal(result.compressed.decoder.complete, false);
 });
 
+test("exposes Format 07 recovery only when explicitly requested", () => {
+  const payload = "1$'T7J-YTG \x1c3DS%PC\x1d'+,#L70H%.7%-\rG&VXX\x1d,%H(J\r";
+  const routing = [
+    "01",
+    "96900079998",
+    "840",
+    "988",
+    "1Z06662334",
+    "UPSN",
+    "0E833Y",
+  ].join(GS);
+  const losAngelesMessage = `[)>${RS}${routing}${RS}07${payload}${RS}${EOT}`;
+  const reader = new UpsMaxicodeReader();
+
+  const standard = reader.read(losAngelesMessage);
+  const recovered = reader.read(losAngelesMessage, { format07Recovery: true });
+
+  assert.equal("recovery" in standard.compressed, false);
+  assert.equal(recovered.compressed.recovery.applied, true);
+  assert.equal(recovered.compressed.recovery.candidate.fieldCandidates.postalCode.value, "90006");
+  assert.equal(recovered.compressed.recovery.candidate.fieldCandidates.weightValue.value, "4");
+  assert.equal(recovered.destination.postalCode, "900079998");
+  assert.equal(recovered.destination.addressLine3, "3585 S VERMONT AVE");
+});
+
 test("recovers the headerless, mispacked Mode 3 message from label 66034", () => {
   const malformedMessage = [
     `352 )${RS}${GS}641`,
