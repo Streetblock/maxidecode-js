@@ -43,6 +43,14 @@ export class UpsMaxicodeReader {
     }
 
     const routing = this.parseRoutingSegment(routingSegment);
+    const compressed = compressedSegment ? this.format07Decoder.decode(compressedSegment) : null;
+    const format05 = this.parseFormat05Segments(segments.filter((segment) => segment.startsWith("05")));
+    const structured = this.buildStructuredFields({
+      primary: routing.primary,
+      secondary: routing.secondary,
+      compressed,
+      format05,
+    });
     return {
       recognized: true,
       standardEnvelope: hasStructuredHeader,
@@ -50,7 +58,9 @@ export class UpsMaxicodeReader {
       format01Header: routing.format01Header,
       primary: routing.primary,
       secondary: routing.secondary,
-      compressed: compressedSegment ? this.format07Decoder.decode(compressedSegment) : null,
+      compressed,
+      format05,
+      ...structured,
     };
   }
 
@@ -98,6 +108,23 @@ export class UpsMaxicodeReader {
     });
     if (!primary) return null;
 
+    const structured = this.buildStructuredFields({ primary, secondary: {
+      trackingNumberEncoded: headerMatch[2].toUpperCase(),
+      scac,
+      shipperId,
+      trackingNumberReconstructed: null,
+      trackingNumberReconstructedFrom: [],
+      julianDayOfPickup: julianDayOfPickup || null,
+      shipmentId: shipmentId || null,
+      packageInShipment: packageInShipment || null,
+      weightPounds: weightPounds || null,
+      addressValidation: addressValidation || null,
+      shipToStreet: shipToStreet || null,
+      shipToCity: shipToCity || null,
+      shipToState: shipToState || null,
+      unknownFields,
+    }, compressed: null, format05: null });
+
     return {
       recognized: true,
       standardEnvelope: false,
@@ -122,12 +149,95 @@ export class UpsMaxicodeReader {
         unknownFields,
       },
       compressed: null,
+      format05: null,
+      ...structured,
       warnings: [
         "Recovered a UPS 01 payload without its ANSI structured-message header.",
         "Postal and country codes are heuristic recoveries from mispacked Mode 3 primary fields.",
         "Service class and full tracking number cannot be reconstructed reliably.",
       ],
     };
+  }
+
+  parseFormat05Segments(segments) {
+    if (!segments.length) return null;
+    const identifiers = {
+      "20L": "shipToAddressLine2",
+      "21L": "shipToAddressLine3",
+      "22L": "shipToAddressLine4",
+      "23L": "shipToAddressLine5",
+    };
+    const fields = {};
+    const unknownFields = [];
+    for (const segment of segments) {
+      let values = segment.slice(2).split(UpsMaxicodeReader.GS);
+      if (values[0] === "") values.shift();
+      for (const raw of values) {
+        if (!raw) continue;
+        const match = /^(20L|21L|22L|23L)(.*)$/s.exec(raw);
+        if (!match) {
+          unknownFields.push(raw);
+          continue;
+        }
+        fields[identifiers[match[1]]] = match[2] || null;
+      }
+    }
+    return { ...fields, unknownFields };
+  }
+
+  buildStructuredFields({ primary, secondary, compressed, format05 }) {
+    const compressedFields = compressed?.ok ? compressed.fields : null;
+    const choose = (...candidates) => candidates.find((value) => value != null && value !== "") ?? null;
+    const addressLine1 = choose(secondary.shipToStreet, compressedFields?.shipToAddressLine1);
+    const addressLine2 = choose(format05?.shipToAddressLine2, compressedFields?.shipToAddressLine2);
+    const addressLine3 = choose(format05?.shipToAddressLine3, compressedFields?.shipToAddressLine3);
+    const addressLine4 = choose(format05?.shipToAddressLine4, compressedFields?.shipToAddressLine4);
+    const addressLine5 = choose(format05?.shipToAddressLine5, compressedFields?.shipToAddressLine5);
+
+    return {
+      destination: {
+        postalCode: primary.postalCode || null,
+        postalCodeFormatted: this.formatPostalCode(primary.postalCode, primary.countryCode),
+        countryCode: primary.countryCode || null,
+        city: secondary.shipToCity || null,
+        state: secondary.shipToState || null,
+        addressLine1,
+        addressLine2,
+        addressLine3,
+        addressLine4,
+        addressLine5,
+        addressLines: [addressLine1, addressLine2, addressLine3, addressLine4, addressLine5],
+        addressValidation: choose(secondary.addressValidation, compressedFields?.addressValidation),
+      },
+      shipment: {
+        trackingNumber: secondary.trackingNumberReconstructed
+          || secondary.trackingNumberEncoded
+          || null,
+        scac: secondary.scac || null,
+        shipperId: secondary.shipperId || null,
+        julianDayOfPickup: choose(
+          secondary.julianDayOfPickup,
+          compressedFields?.julianDayOfPickup,
+        ),
+        shipmentId: choose(secondary.shipmentId, compressedFields?.shipmentId),
+        packageInShipment: choose(
+          secondary.packageInShipment,
+          compressedFields?.packageInShipment,
+        ),
+        weightPounds: choose(secondary.weightPounds, compressedFields?.weightPounds),
+      },
+    };
+  }
+
+  formatPostalCode(postalCode, countryCode) {
+    const postal = String(postalCode ?? "");
+    // Fig. 2 defines Mode 2 as a nine-digit postal field. For the United
+    // States (ISO numeric 840), render that field using conventional ZIP+4
+    // punctuation while preserving the encoded digits separately.
+    if (countryCode === "840" && /^\d{9}$/.test(postal)) {
+      return `${postal.slice(0, 5)}-${postal.slice(5)}`;
+    }
+    return postal || null;
   }
 
   recoverMispackedPrimary({ rawPostalCode, rawCountryCode, rawServiceClass }) {
