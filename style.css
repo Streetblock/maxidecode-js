@@ -459,6 +459,30 @@ h2 {
 
 .ups-fields strong {
   font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+.ups-detail-section {
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid rgba(122, 185, 207, 0.16);
+}
+
+.ups-detail-section h3 {
+  margin: 0;
+  color: #d8f6ff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ups-detail-fields {
+  padding-top: 10px;
+}
+
+.ups-detail-fields .wide {
+  grid-column: 1 / -1;
 }
 
 .result-text {

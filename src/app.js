@@ -14,6 +14,21 @@ const els = {
   upsCountry: document.getElementById("upsCountry"),
   upsService: document.getElementById("upsService"),
   upsFormat07: document.getElementById("upsFormat07"),
+  upsCity: document.getElementById("upsCity"),
+  upsState: document.getElementById("upsState"),
+  upsAddress1: document.getElementById("upsAddress1"),
+  upsAddress2: document.getElementById("upsAddress2"),
+  upsAddress3: document.getElementById("upsAddress3"),
+  upsAddress4: document.getElementById("upsAddress4"),
+  upsAddress5: document.getElementById("upsAddress5"),
+  upsAddressValidation: document.getElementById("upsAddressValidation"),
+  upsShipperId: document.getElementById("upsShipperId"),
+  upsScac: document.getElementById("upsScac"),
+  upsJulianDay: document.getElementById("upsJulianDay"),
+  upsShipmentId: document.getElementById("upsShipmentId"),
+  upsPackage: document.getElementById("upsPackage"),
+  upsWeight: document.getElementById("upsWeight"),
+  upsWeightUnit: document.getElementById("upsWeightUnit"),
   modeValue: document.getElementById("modeValue"),
   centerValue: document.getElementById("centerValue"),
   pitchValue: document.getElementById("pitchValue"),
@@ -71,7 +86,7 @@ function updateUpsSummary(ups) {
   els.upsTracking.textContent = ups.secondary.trackingNumberReconstructed
     || ups.secondary.trackingNumberEncoded
     || "Not available";
-  els.upsPostal.textContent = ups.primary.postalCode || "-";
+  els.upsPostal.textContent = ups.destination.postalCodeFormatted || "-";
   els.upsCountry.textContent = ups.primary.countryCode || "-";
   els.upsService.textContent = ups.primary.serviceClass || "-";
   els.upsFormat07.textContent = ups.compressed
@@ -79,6 +94,19 @@ function updateUpsSummary(ups) {
       ? ups.compressed.decoder.complete ? "Decoded" : "Decoded (partial)"
       : "Transport recovered"
     : "Not present";
+  els.upsCity.textContent = ups.destination.city || "-";
+  els.upsState.textContent = ups.destination.state || "-";
+  for (let line = 1; line <= 5; line += 1) {
+    els[`upsAddress${line}`].textContent = ups.destination[`addressLine${line}`] || "-";
+  }
+  els.upsAddressValidation.textContent = ups.destination.addressValidation || "-";
+  els.upsShipperId.textContent = ups.shipment.shipperId || "-";
+  els.upsScac.textContent = ups.shipment.scac || "-";
+  els.upsJulianDay.textContent = ups.shipment.julianDayOfPickup || "-";
+  els.upsShipmentId.textContent = ups.shipment.shipmentId || "-";
+  els.upsPackage.textContent = ups.shipment.packageInShipment || "-";
+  els.upsWeight.textContent = ups.shipment.weightValue || "-";
+  els.upsWeightUnit.textContent = ups.shipment.weightUnit || "Not encoded";
 }
 
 function formatUpsResult(ups) {
