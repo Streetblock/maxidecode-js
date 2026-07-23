@@ -23,6 +23,44 @@ const vectors = [
     bitsConsumed: 247,
     trailingBits: "11100",
   },
+  {
+    name: "New York sample label",
+    payload: "F*N&\rWZS'TS /'M\x1c\x1cO%HNUOLEVT(-3N39&U.(B(TLZLP\r",
+    hex: "1891b6f412642d089a34116770630848efbd082142c46176e7d82a63c61ec4fa",
+    // The printed label says 2ND. The compressed source explicitly ends the
+    // field after 2N and continues with later fields, so preserve 2N.
+    text: `0\x1d\x1dGROUND FLOOR  4TH CROSS ROAD  2N\x1d\x1dMAIN STREET\x1d-\x1d`,
+    complete: false,
+    bitsConsumed: 250,
+    trailingBits: "10",
+  },
+  {
+    name: "Amazon Teterboro label",
+    payload: "FXF/GO*A' 971SO68XK\x1c\x1cDYI8LLX0VSLF7#$\x1dPTEK6\"S\r",
+    hex: "1d9e79ea045350df7fe7f07462a12a1eea105bd842622f3ba849bf5373d07eda",
+    text: `\x1d\x1d MMU9 E3 AMAZON RETURNS CR\x1d698 ROUTE 46 WEST\x1d\x1d\x1d`,
+    complete: false,
+    bitsConsumed: 250,
+    trailingBits: "10",
+  },
+  {
+    name: "Valentino Returns label",
+    payload: "BTD'.F\x1cPSU)YLC)4X58OHC89OFO5PU\"(ZFN7X(ZZN*ZS\r",
+    hex: "1d80c1ad2c3d548754fbb56da63f91d1e1d1a12a1eea105bf4f837f04a87ba84",
+    text: `\x1d\x1d1620 STATELINE RD E\x1d\x1d\x1dVALENTINO RETURNS\x1d333\x1dRETUR`,
+    complete: true,
+    bitsConsumed: 252,
+    trailingBits: "",
+  },
+  {
+    name: "Los Angeles SurePost label",
+    payload: "1$'T7J-YTG \x1c3DS%PC\x1d'+,#L70H%.7%-\rG&VXX\x1d,%H(J\r",
+    hex: "1022eda97b30decc74e631479b2db7513ded87c17258bd3b9b0b3b9808ba6702",
+    text: `1\x1d\x1d3585 S VERMONT AVE\x1d\x1d\x1dU`,
+    complete: false,
+    bitsConsumed: 120,
+    trailingBits: "000100111101111011011000011111000001011100100101100010111101001110111001101100001011001110111001100000001000101110100110011100000010",
+  },
 ];
 
 function toHex(bytes) {
