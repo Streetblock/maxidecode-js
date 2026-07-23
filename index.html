@@ -106,6 +106,9 @@
               <h2>Decode output</h2>
             </div>
             <div class="result-actions">
+              <button class="ghost-btn small recovery-btn" id="recoveryBtn" type="button" hidden>
+                Recover damaged code
+              </button>
               <button class="ghost-btn small details-btn" id="resultToggle" type="button" aria-expanded="false" aria-controls="resultDetails">
                 View result
               </button>
@@ -196,6 +199,11 @@
               <details class="raw-bytes">
                 <summary>Raw decoded Secondary Message</summary>
                 <pre id="rawMessage">-</pre>
+              </details>
+
+              <details class="raw-bytes recovery-report" id="recoveryDetails" hidden open>
+                <summary>Recovery provenance</summary>
+                <pre id="recoveryReport">-</pre>
               </details>
 
               <div class="result-note" id="resultNote">Ready for an image.</div>

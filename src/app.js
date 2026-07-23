@@ -1,5 +1,6 @@
 import { clamp } from "./maxicode/scanner.js";
 import { AUTO_THRESHOLD_CANDIDATES, scanWithThresholds } from "./maxicode/adaptiveScan.js";
+import { recoverDamagedMaxiCode } from "./maxicode/recovery.js";
 import { UpsMaxicodeReader } from "./ups/UpsMaxicodeReader.js";
 
 const els = {
@@ -46,6 +47,9 @@ const els = {
   copyBtn: document.getElementById("copyBtn"),
   resultPanel: document.getElementById("resultPanel"),
   resultToggle: document.getElementById("resultToggle"),
+  recoveryBtn: document.getElementById("recoveryBtn"),
+  recoveryDetails: document.getElementById("recoveryDetails"),
+  recoveryReport: document.getElementById("recoveryReport"),
   dropzone: document.getElementById("dropzone"),
   previewCanvas: document.getElementById("previewCanvas"),
   idleState: document.getElementById("idleState"),
@@ -64,6 +68,7 @@ const state = {
   analysis: null,
   dragActive: false,
   thresholdAttempt: 0,
+  recoveryInFlight: false,
 };
 
 const previewCtx = els.previewCanvas.getContext("2d");
@@ -263,6 +268,27 @@ function drawFrame(analysis = null) {
     previewCtx.fill();
     previewCtx.restore();
   }
+
+  const damagedModules = analysis?.decode?.recovery?.damagedModules;
+  if (damagedModules) {
+    previewCtx.save();
+    previewCtx.fillStyle = "rgba(255, 112, 92, 0.78)";
+    for (const modules of Object.values(damagedModules)) {
+      for (const module of modules) {
+        if (!Number.isFinite(module.x) || !Number.isFinite(module.y)) continue;
+        previewCtx.beginPath();
+        previewCtx.arc(
+          frame.x + module.x * frame.scale,
+          frame.y + module.y * frame.scale,
+          Math.max(1.5, frame.scale * 1.8),
+          0,
+          Math.PI * 2,
+        );
+        previewCtx.fill();
+      }
+    }
+    previewCtx.restore();
+  }
 }
 
 function sourceCanvasHasContent() {
@@ -300,13 +326,18 @@ function updateUIFromAnalysis(analysis) {
     els.bytesValue.textContent = "-";
     els.rawBytes.textContent = "-";
     els.resultNote.textContent = "Ready for an image.";
+    els.recoveryBtn.hidden = true;
+    els.recoveryDetails.hidden = true;
+    els.recoveryReport.textContent = "-";
     els.idleState.hidden = false;
     drawStageBackdrop();
     return;
   }
 
   const confidencePct = Math.round((analysis.confidence ?? 0) * 1000) / 10;
-  const recoveryMode = Boolean(analysis.ups?.variant || analysis.ups?.primary?.recovered);
+  const aggressiveRecovery = Boolean(analysis.decode?.recovery);
+  const failedRecovery = analysis.recoveryAttempt?.observations || null;
+  const recoveryMode = Boolean(aggressiveRecovery || analysis.ups?.variant || analysis.ups?.primary?.recovered);
   const truncatedMessage = analysis.ups?.status === "truncated";
   let statusKind = analysis.decode?.decoded ? "live" : confidencePct >= 65 ? "warn" : "bad";
   let pillText = analysis.decode?.decoded ? "Decoded" : "Analyzed";
@@ -315,7 +346,7 @@ function updateUIFromAnalysis(analysis) {
     : state.cameraActive ? "Camera live" : pillText;
   if (recoveryMode) {
     statusKind = "warn";
-    pillText = "Recovery mode";
+    pillText = aggressiveRecovery ? "Aggressive recovery" : "Recovery mode";
     statusText = "Recovered · review";
   } else if (truncatedMessage) {
     statusKind = "warn";
@@ -361,8 +392,46 @@ function updateUIFromAnalysis(analysis) {
         .map((byte, index) => `${index.toString(16).padStart(2, "0")} ${byte.toString(16).padStart(2, "0")}`)
         .join("  ")
     : "-";
-  const recoveryNote = recoveryMode
-    ? " Recovery mode: non-standard UPS framing and mispacked primary fields require review."
+  els.recoveryBtn.hidden = Boolean(analysis.decode?.decoded) || !sourceCanvasHasContent();
+  els.recoveryBtn.disabled = state.recoveryInFlight;
+  els.recoveryBtn.textContent = state.recoveryInFlight ? "Recovery running..." : "Recover damaged code";
+  els.recoveryDetails.hidden = !aggressiveRecovery && !failedRecovery;
+  if (aggressiveRecovery) {
+    const recovery = analysis.decode.recovery;
+    const changed = recovery.erasureCorrections.filter((entry) => entry.changed).length;
+    els.recoveryReport.textContent = [
+      "Mode: aggressive, explicitly requested",
+      `Verification: ${recovery.verification}`,
+      `Search attempts: ${recovery.attempts}`,
+      `Threshold: ${recovery.threshold}`,
+      `Directly sampled codewords: ${recovery.directlySampledCodewords}`,
+      `Marked as destroyed (erasures): ${recovery.erasedCodewords.length}`,
+      `Changed by erasure reconstruction: ${changed}`,
+      `Located by bounded brute force: ${recovery.bruteForcePositions.length}`,
+      `Brute-force parity trials: ${recovery.bruteForceAttempts}`,
+      `Additional Reed-Solomon corrections: ${recovery.reedSolomonCorrectionsAfterErasureRecovery}`,
+      `Erased codeword indexes: ${recovery.erasedCodewords.join(", ")}`,
+    ].join("\n");
+  } else {
+    els.recoveryReport.textContent = failedRecovery
+      ? [
+          "Mode: aggressive, explicitly requested",
+          "Verification: FAILED - no decoded payload is trusted",
+          `Search attempts: ${analysis.recoveryAttempt.attempts}`,
+          `Threshold: ${failedRecovery.threshold}`,
+          `Directly sampled, unverified codewords: ${failedRecovery.directlySampledCodewords.length}`,
+          `Marked as destroyed (erasures): ${failedRecovery.erasedCodewordIndexes.length}`,
+          `Detected damage angle: ${(failedRecovery.damageBand.angle * 180 / Math.PI).toFixed(1)} deg`,
+          `Erased codeword indexes: ${failedRecovery.erasedCodewordIndexes.join(", ")}`,
+          `Observed raw codewords: ${failedRecovery.directlySampledCodewords.map((entry) => `${entry.index}:${entry.value}`).join(" ")}`,
+          "The remaining raw symbols are observations only; no partial text was fabricated.",
+        ].join("\n")
+      : "-";
+  }
+  const recoveryNote = aggressiveRecovery
+    ? " Aggressive recovery: damaged modules were treated as erasures; every Reed-Solomon parity check passed. Review the provenance below."
+    : recoveryMode
+      ? " Recovery mode: non-standard UPS framing and mispacked primary fields require review."
     : "";
   const thresholdNote = analysis.threshold !== AUTO_THRESHOLD_CANDIDATES[0]
     ? ` Auto-selected threshold ${analysis.threshold}.`
@@ -628,6 +697,7 @@ function clearState() {
   state.sourceName = "";
   state.analysis = null;
   state.thresholdAttempt = 0;
+  state.recoveryInFlight = false;
   els.sourceCanvas.width = 0;
   els.sourceCanvas.height = 0;
   els.fileInput.value = "";
@@ -661,6 +731,89 @@ async function copyResult() {
   }
 }
 
+async function runAggressiveRecovery() {
+  if (!sourceCanvasHasContent() || state.recoveryInFlight) return;
+  state.recoveryInFlight = true;
+  updateUIFromAnalysis(state.analysis);
+  setStatus("warn", "Recovery running");
+  els.resultNote.textContent = "Searching damaged regions and grid variants. Only parity-valid results will be accepted.";
+
+  // Yield once so the warning state paints before the CPU-bound bounded search.
+  await new Promise((resolve) => window.setTimeout(resolve, 20));
+  const imageData = sourceCtx.getImageData(0, 0, els.sourceCanvas.width, els.sourceCanvas.height);
+  let result;
+  try {
+    result = await runRecoveryOffMainThread(imageData);
+  } catch (error) {
+    state.recoveryInFlight = false;
+    updateUIFromAnalysis(state.analysis);
+    setStatus("bad", "Recovery error");
+    els.resultNote.textContent = error?.message || "The recovery worker failed.";
+    return;
+  }
+  state.recoveryInFlight = false;
+
+  if (!result.ok) {
+    state.analysis = { ...state.analysis, recoveryAttempt: result };
+    updateUIFromAnalysis(state.analysis);
+    setStatus("bad", "Recovery failed");
+    els.resultNote.textContent = [
+      `No Reed-Solomon-valid reconstruction was found in ${result.attempts} bounded attempts.`,
+      "The scanner has not invented or returned partial payload data.",
+      result.strongestFailure?.error ? `Last check: ${result.strongestFailure.error}.` : "",
+    ].filter(Boolean).join(" ");
+    return;
+  }
+
+  let ups = null;
+  try {
+    ups = result.decode.text ? upsReader.read(result.decode.text) : null;
+  } catch (error) {
+    ups = { recognized: false, error: error?.message || String(error) };
+  }
+  state.analysis = {
+    ...state.analysis,
+    center: result.center,
+    pitch: result.pitch,
+    threshold: result.threshold,
+    scanRegion: result.scanRegion || null,
+    decode: result.decode,
+    ups,
+    confidence: 0.86,
+  };
+  state.phase = "decoded";
+  stopCamera({ keepPhase: true });
+  setResultExpanded(true);
+  updateUIFromAnalysis(state.analysis);
+}
+
+function runRecoveryOffMainThread(imageData) {
+  if (typeof Worker !== "function") {
+    return Promise.resolve(recoverDamagedMaxiCode(imageData));
+  }
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL("./maxicode/recoveryWorker.js", import.meta.url), {
+      type: "module",
+    });
+    worker.addEventListener("message", (event) => {
+      worker.terminate();
+      if (event.data?.error) reject(new Error(event.data.error));
+      else resolve(event.data.result);
+    }, { once: true });
+    worker.addEventListener("error", (event) => {
+      worker.terminate();
+      reject(event.error || new Error(event.message || "Recovery worker failed"));
+    }, { once: true });
+    worker.postMessage({
+      imageData: {
+        width: imageData.width,
+        height: imageData.height,
+        data: imageData.data,
+      },
+    }, [imageData.data.buffer]);
+  });
+}
+
 function wireEvents() {
   els.uploadBtn.addEventListener("click", () => els.fileInput.click());
   els.fileInput.addEventListener("change", async () => {
@@ -688,6 +841,7 @@ function wireEvents() {
 
   els.clearBtn.addEventListener("click", clearState);
   els.copyBtn.addEventListener("click", copyResult);
+  els.recoveryBtn.addEventListener("click", runAggressiveRecovery);
   els.resultToggle.addEventListener("click", () => {
     setResultExpanded(!els.resultPanel.classList.contains("is-expanded"));
   });

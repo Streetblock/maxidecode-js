@@ -26,6 +26,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   min-height: 100%;
@@ -404,6 +408,24 @@ h2 {
 .result-meta {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.recovery-btn {
+  border-color: rgba(247, 190, 85, 0.52);
+  color: #f7d28b;
+}
+
+.recovery-btn:disabled {
+  cursor: progress;
+  opacity: 0.62;
+}
+
+.recovery-report {
+  border-color: rgba(247, 190, 85, 0.3);
+}
+
+.recovery-report pre {
+  color: #f7dca7;
 }
 
 .ups-summary {

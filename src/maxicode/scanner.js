@@ -644,6 +644,113 @@ class GenericGF {
 
 const MAXICODE_FIELD_64 = new GenericGF(0b1000011, 64, 1);
 
+function fieldPower(field, value, exponent) {
+  if (exponent === 0) return 1;
+  if (value === 0) return 0;
+  return field.exp((field.log(value) * exponent) % (field.size - 1));
+}
+
+function solveReedSolomonErasures(received, parityCount, erasurePositions) {
+  const erasures = [...new Set(erasurePositions)].sort((left, right) => left - right);
+  if (!erasures.length) return [];
+  if (erasures.some((position) => position < 0 || position >= received.length)) {
+    throw new ReedSolomonError("Erasure position lies outside the Reed-Solomon block");
+  }
+  if (erasures.length > parityCount) {
+    throw new ReedSolomonError("Too many erasures for the Reed-Solomon block");
+  }
+
+  const known = [...received];
+  for (const position of erasures) known[position] = 0;
+  const knownPoly = new GenericGFPoly(MAXICODE_FIELD_64, known);
+  const matrix = erasures.map((_, equation) => {
+    const at = MAXICODE_FIELD_64.exp(equation + MAXICODE_FIELD_64.generatorBase);
+    return [
+      ...erasures.map((position) => fieldPower(
+        MAXICODE_FIELD_64,
+        at,
+        received.length - 1 - position,
+      )),
+      knownPoly.evaluateAt(at),
+    ];
+  });
+
+  for (let column = 0; column < erasures.length; column += 1) {
+    const pivot = matrix.findIndex((row, index) => index >= column && row[column] !== 0);
+    if (pivot < 0) throw new ReedSolomonError("Singular erasure system");
+    [matrix[column], matrix[pivot]] = [matrix[pivot], matrix[column]];
+
+    const inverse = MAXICODE_FIELD_64.inverse(matrix[column][column]);
+    matrix[column] = matrix[column].map((entry) => MAXICODE_FIELD_64.multiply(entry, inverse));
+    for (let row = 0; row < matrix.length; row += 1) {
+      if (row === column || matrix[row][column] === 0) continue;
+      const factor = matrix[row][column];
+      matrix[row] = matrix[row].map(
+        (entry, index) => entry ^ MAXICODE_FIELD_64.multiply(factor, matrix[column][index]),
+      );
+    }
+  }
+
+  const replacements = erasures.map((position, index) => ({
+    position,
+    before: received[position],
+    after: matrix[index][erasures.length],
+  }));
+  for (const replacement of replacements) received[replacement.position] = replacement.after;
+
+  const repairedPoly = new GenericGFPoly(MAXICODE_FIELD_64, received);
+  for (let index = 0; index < parityCount; index += 1) {
+    const at = MAXICODE_FIELD_64.exp(index + MAXICODE_FIELD_64.generatorBase);
+    if (repairedPoly.evaluateAt(at) !== 0) {
+      throw new ReedSolomonError("Erasure reconstruction does not satisfy all parity checks");
+    }
+  }
+  return replacements;
+}
+
+function solveErasuresWithPositionSearch(received, parityCount, erasurePositions, maxUnknownErrors) {
+  if (erasurePositions.length > parityCount) {
+    throw new ReedSolomonError("Too many erasures for the Reed-Solomon block");
+  }
+  const tryPositions = (extraPositions) => {
+    const candidate = [...received];
+    try {
+      const replacements = solveReedSolomonErasures(
+        candidate,
+        parityCount,
+        [...erasurePositions, ...extraPositions],
+      );
+      return { candidate, replacements, extraPositions };
+    } catch {
+      return null;
+    }
+  };
+
+  let attempts = 1;
+  let solved = tryPositions([]);
+  if (solved) return { ...solved, attempts };
+
+  const knownPositions = Array.from({ length: received.length }, (_, index) => index)
+    .filter((index) => !erasurePositions.includes(index));
+  if (maxUnknownErrors >= 1 && erasurePositions.length + 2 <= parityCount) {
+    for (const position of knownPositions) {
+      attempts += 1;
+      solved = tryPositions([position]);
+      if (solved) return { ...solved, attempts };
+    }
+  }
+  if (maxUnknownErrors >= 2 && erasurePositions.length + 4 <= parityCount) {
+    for (let left = 0; left < knownPositions.length; left += 1) {
+      for (let right = left + 1; right < knownPositions.length; right += 1) {
+        attempts += 1;
+        solved = tryPositions([knownPositions[left], knownPositions[right]]);
+        if (solved) return { ...solved, attempts };
+      }
+    }
+  }
+  throw new ReedSolomonError("Erasure and bounded position search did not satisfy parity checks");
+}
+
 class ReedSolomonDecoder {
   constructor(field) {
     this.field = field;
@@ -804,7 +911,9 @@ function decodeMaxiCodeData(codewords) {
       }
     }
     const errorsCorrected = rsDecoder.decodeWithECCount(ints, ecCodewords / divisor);
-    for (let i = 0; i < dataCodewords; i += 1) {
+    // Keep the complete corrected block, including parity symbols. Recovery mode
+    // needs a fully valid reference block for audit and regression tests.
+    for (let i = 0; i < total; i += 1) {
       if (mode === 0 || i % 2 === (mode - 1)) {
         codewordBytes[i + start] = ints[Math.floor(i / divisor)] & 0x3F;
       }
@@ -941,7 +1050,80 @@ function decodeMaxiCodeData(codewords) {
     primary,
     secondaryText: text,
     ansiText,
+    correctedCodewords: Array.from(data),
     text,
+  };
+}
+
+function decodeMaxiCodeDataWithErasures(codewords, erasedCodewords, options = {}) {
+  const data = Uint8Array.from(codewords, (value) => value & 0x3F);
+  const erased = new Set(erasedCodewords);
+  const replacements = [];
+  const bruteForcePositions = [];
+  let bruteForceAttempts = 0;
+  const maxUnknownErrors = options.maxUnknownErrorsPerBlock || 0;
+
+  const repairBlock = (start, totalCodewords, parityCount, parity = null) => {
+    const sourceIndexes = [];
+    const block = [];
+    for (let offset = 0; offset < totalCodewords; offset += 1) {
+      if (parity !== null && offset % 2 !== parity) continue;
+      sourceIndexes.push(start + offset);
+      block.push(data[start + offset]);
+    }
+    const blockErasures = sourceIndexes
+      .map((sourceIndex, index) => erased.has(sourceIndex) ? index : -1)
+      .filter((index) => index >= 0);
+    const solved = solveErasuresWithPositionSearch(
+      block,
+      parityCount,
+      blockErasures,
+      maxUnknownErrors,
+    );
+    bruteForceAttempts += solved.attempts;
+    for (let index = 0; index < solved.candidate.length; index += 1) {
+      data[sourceIndexes[index]] = solved.candidate[index];
+    }
+    const extraSet = new Set(solved.extraPositions);
+    for (const replacement of solved.replacements) {
+      const sourceIndex = sourceIndexes[replacement.position];
+      if (extraSet.has(replacement.position)) bruteForcePositions.push(sourceIndex);
+      replacements.push({
+        codewordIndex: sourceIndex,
+        before: replacement.before,
+        after: replacement.after,
+        changed: replacement.before !== replacement.after,
+        source: extraSet.has(replacement.position)
+          ? "bounded-error-position-search"
+          : "damage-erasure-reconstruction",
+      });
+    }
+  };
+
+  repairBlock(0, 20, 10);
+  const mode = data[0] & 0x0F;
+  if (mode === 2 || mode === 3 || mode === 4) {
+    repairBlock(20, 124, 20, 0);
+    repairBlock(20, 124, 20, 1);
+  } else if (mode === 5) {
+    repairBlock(20, 124, 28, 0);
+    repairBlock(20, 124, 28, 1);
+  } else {
+    throw new ReedSolomonError(`Unsupported recovered MaxiCode mode ${mode}`);
+  }
+
+  const decoded = decodeMaxiCodeData(data);
+  return {
+    ...decoded,
+    recovery: {
+      erasedCodewords: [...erased].sort((left, right) => left - right),
+      erasureCorrections: replacements.sort(
+        (left, right) => left.codewordIndex - right.codewordIndex,
+      ),
+      bruteForcePositions: bruteForcePositions.sort((left, right) => left - right),
+      bruteForceAttempts,
+      reedSolomonCorrectionsAfterErasureRecovery: decoded.errorsCorrected,
+    },
   };
 }
 
@@ -1904,17 +2086,22 @@ export class MaxiCodeScanner {
 }
 
 export {
+  MAXICODE_BITNR,
   bitsToBytes,
   buildHexLayout,
   bytesToPrintableText,
   clamp,
   decodeMaxiCodeData,
   reconstructCarrierAnsiMessage,
+  decodeMaxiCodeDataWithErasures,
   extractPureBitsFromMask,
   extractPureBitsFromRect,
   mean,
   median,
   readCodewordsFromBitMatrix,
+  orientedImagePosition,
+  sampleOrientedCodewords,
+  scoreOrientedGridContrast,
   sampleGray,
   sampleMask,
 };

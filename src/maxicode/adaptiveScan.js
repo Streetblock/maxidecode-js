@@ -9,7 +9,7 @@ function attemptScore(attempt) {
   return (attempt.center.confidence || 0) * 0.72 + (attempt.decode.density || 0) * 0.2;
 }
 
-function cropImageData(imageData, region) {
+export function cropImageData(imageData, region) {
   const data = new Uint8ClampedArray(region.width * region.height * 4);
   for (let y = 0; y < region.height; y += 1) {
     const sourceStart = ((region.top + y) * imageData.width + region.left) * 4;
@@ -22,7 +22,7 @@ function cropImageData(imageData, region) {
   return { width: region.width, height: region.height, data };
 }
 
-function cropRegionForCandidate(imageData, candidate) {
+export function cropRegionForCandidate(imageData, candidate) {
   if (!Number.isFinite(candidate?.x) || !Number.isFinite(candidate?.y)) return null;
   if (!Number.isFinite(candidate?.bandWidth) || candidate.bandWidth <= 0) return null;
 
