@@ -777,6 +777,20 @@ function canDecodeMaxiCodePrimary(codewords) {
   }
 }
 
+function reconstructCarrierAnsiMessage(secondaryText, primary) {
+  const separator = "\u001D";
+  const primaryFields = [primary.postalCode, primary.countryCode, primary.serviceClass].join(separator);
+
+  // Modes 2 and 3 store the routing fields in the dedicated Primary Message.
+  // This is an explicitly derived ANSI representation; secondaryText itself
+  // remains byte-for-byte faithful to the decoded Secondary Message symbols.
+  if (secondaryText.startsWith(`[)>\u001E01\u001D`)) {
+    const format01HeaderLength = 9; // [)> RS 01 GS 96
+    return `${secondaryText.slice(0, format01HeaderLength)}${primaryFields}${separator}${secondaryText.slice(format01HeaderLength)}`;
+  }
+  return `${primaryFields}${separator}${secondaryText}`;
+}
+
 function decodeMaxiCodeData(codewords) {
   const rsDecoder = new ReedSolomonDecoder(MAXICODE_FIELD_64);
 
@@ -881,6 +895,8 @@ function decodeMaxiCodeData(codewords) {
   };
 
   let text;
+  let ansiText = null;
+  let primary = null;
   switch (mode) {
     case 2:
     case 3: {
@@ -900,11 +916,12 @@ function decodeMaxiCodeData(codewords) {
             .map((positions) => MAXICODE_CHARSETS[0].charAt(getIntFromBytes(payload, positions)))
             .join("");
       text = decodeMessage(payload, 10, 84);
-      if (text.startsWith(`[)>\u001E01\u001D`)) {
-        text = text.slice(0, 9) + postcode + "\u001D" + country + "\u001D" + service + "\u001D" + text.slice(9);
-      } else {
-        text = `${postcode}\u001D${country}\u001D${service}\u001D${text}`;
-      }
+      primary = {
+        postalCode: postcode,
+        countryCode: country,
+        serviceClass: service,
+      };
+      ansiText = reconstructCarrierAnsiMessage(text, primary);
       break;
     }
     case 4:
@@ -921,6 +938,9 @@ function decodeMaxiCodeData(codewords) {
     mode,
     errorsCorrected,
     rawBytes: Array.from(payload),
+    primary,
+    secondaryText: text,
+    ansiText,
     text,
   };
 }
@@ -1833,6 +1853,9 @@ export class MaxiCodeScanner {
           bits,
           bytes: decoded.rawBytes,
           text: decoded.text,
+          secondaryText: decoded.secondaryText,
+          ansiText: decoded.ansiText,
+          primary: decoded.primary,
           density,
           modeGuess,
           mode: decoded.mode,
@@ -1886,6 +1909,7 @@ export {
   bytesToPrintableText,
   clamp,
   decodeMaxiCodeData,
+  reconstructCarrierAnsiMessage,
   extractPureBitsFromMask,
   extractPureBitsFromRect,
   mean,
