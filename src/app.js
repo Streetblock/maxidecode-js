@@ -92,7 +92,9 @@ function updateUpsSummary(ups) {
   els.upsService.textContent = ups.primary.serviceClass || "-";
   els.upsFormat07.textContent = ups.compressed
     ? ups.compressed.ok
-      ? ups.compressed.decoder.complete ? "Decoded" : "Decoded (partial)"
+      ? ups.compressed.decoder.complete
+        ? "Bitstream expanded"
+        : "Expanded with unresolved tail"
       : "Transport recovered"
     : "Not present";
   els.upsCity.textContent = ups.destination.city || "-";
@@ -136,8 +138,9 @@ function formatUpsResult(ups) {
 
   const lines = ups.compressed.fields.nonEmptySegments;
   const suffix = ups.compressed.decoder.complete
-    ? ""
-    : "\n\nPartial result: the final compressed bits do not form another complete token.";
+    ? "\n\nSource truncation: unknown (the framing-bit layout is not disclosed)."
+    : "\n\nUnresolved tail: the final compressed bits do not form another complete token."
+      + "\nSource truncation: unknown.";
   return `UPS Format 07\n${lines.join("\n")}${suffix}${warningText}`;
 }
 
