@@ -47,7 +47,7 @@ export class UpsMaxicodeReader {
     }
 
     const routing = this.parseRoutingSegment(routingSegment);
-    const compressed = compressedSegment ? this.format07Decoder.decode(compressedSegment) : null;
+    const compressed = compressedSegment ? this.decodeCompressedSegment(compressedSegment) : null;
     const format05 = this.parseFormat05Segments(segments.filter((segment) => segment.startsWith("05")));
     const structured = this.buildStructuredFields({
       primary: routing.primary,
@@ -59,6 +59,7 @@ export class UpsMaxicodeReader {
       hasStructuredHeader,
       hasMessageTrailer,
       secondary: routing.secondary,
+      compressed,
     });
     return {
       recognized: true,
@@ -75,7 +76,27 @@ export class UpsMaxicodeReader {
     };
   }
 
-  validateMessage({ hasStructuredHeader, hasMessageTrailer, secondary }) {
+  decodeCompressedSegment(segment) {
+    try {
+      return this.format07Decoder.decode(segment);
+    } catch (error) {
+      const message = error?.message || String(error);
+      const lengthMatch = /must contain (\d+) symbols; received (\d+)/.exec(message);
+      return {
+        ok: false,
+        format: "07",
+        status: lengthMatch && Number(lengthMatch[2]) < Number(lengthMatch[1])
+          ? "truncated"
+          : "invalid",
+        payload: segment.slice(2),
+        error: message,
+        expectedSymbols: lengthMatch ? Number(lengthMatch[1]) : null,
+        receivedSymbols: lengthMatch ? Number(lengthMatch[2]) : null,
+      };
+    }
+  }
+
+  validateMessage({ hasStructuredHeader, hasMessageTrailer, secondary, compressed }) {
     const warnings = [];
     const state = secondary.shipToState;
     const unexpectedFields = secondary.unknownFields.filter((value) => value !== "");
@@ -97,10 +118,19 @@ export class UpsMaxicodeReader {
     if (hasStructuredHeader && !hasMessageTrailer) {
       warnings.push("The MaxiCode payload appears truncated before the ANSI message trailer.");
     }
+    if (compressed?.ok === false) {
+      warnings.push(
+        compressed.status === "truncated"
+          ? `Format 07 transport is truncated (${compressed.receivedSymbols}/${compressed.expectedSymbols} symbols).`
+          : `Format 07 transport is invalid: ${compressed.error}`,
+      );
+    }
 
     return {
       status: !hasMessageTrailer
         ? "truncated"
+        : compressed?.status === "truncated"
+          ? "truncated"
         : warnings.length
           ? "malformed"
           : "valid",
