@@ -1,6 +1,8 @@
 import { MaxiCodeScanner } from "./scanner.js";
 
-export const AUTO_THRESHOLD_CANDIDATES = Object.freeze([128, 144, 152]);
+// Preserve the common thresholds first. The darker fallback is needed for
+// photographed labels where gray paper and shadows otherwise merge into ink.
+export const AUTO_THRESHOLD_CANDIDATES = Object.freeze([128, 144, 152, 96]);
 
 function attemptScore(attempt) {
   if (attempt.decode.decoded) return Number.POSITIVE_INFINITY;
@@ -27,7 +29,12 @@ function cropRegionForCandidate(imageData, candidate) {
   // The MaxiCode symbol extends roughly 25 bullseye bands from its center.
   // Keep the retry tight: unrelated label text can otherwise dominate the
   // fallback geometry just as it did in the original full-image attempt.
-  const halfSize = Math.max(72, Math.ceil(candidate.bandWidth * 28));
+  // A complete symbol spans roughly 24-28 true bullseye bands from its center.
+  // Keeping a fixed 72 px minimum made tiny web labels worse: their 1 px
+  // bullseye band was recropped with more surrounding text than MaxiCode. Run
+  // pattern widths are often slightly inflated, so 20 provides useful margin
+  // without pulling the adjacent linear barcodes back into the retry.
+  const halfSize = Math.max(32, Math.ceil(candidate.bandWidth * 20));
   const left = Math.max(0, Math.floor(candidate.x - halfSize));
   const top = Math.max(0, Math.floor(candidate.y - halfSize));
   const right = Math.min(imageData.width, Math.ceil(candidate.x + halfSize));
@@ -35,7 +42,7 @@ function cropRegionForCandidate(imageData, candidate) {
   const width = right - left;
   const height = bottom - top;
 
-  if (width < 64 || height < 64) return null;
+  if (width < 48 || height < 48) return null;
   return { left, top, width, height };
 }
 
@@ -63,6 +70,7 @@ function translateAttempt(attempt, region) {
 
 function runThresholds(imageData, thresholds, scannerOptions, scannerFactory, region = null) {
   const attempts = [];
+  const candidates = [];
   let best = null;
 
   for (const threshold of thresholds) {
@@ -79,6 +87,10 @@ function runThresholds(imageData, thresholds, scannerOptions, scannerFactory, re
     const decode = scanner.decode(cells);
     const attempt = { threshold, center, pitch, cells, decode, scanner };
 
+    if (typeof scanner.findBullseyePatternCandidates === "function") {
+      candidates.push(...scanner.findBullseyePatternCandidates());
+    }
+
     attempts.push({
       threshold,
       centerFound: Boolean(center.found),
@@ -93,7 +105,7 @@ function runThresholds(imageData, thresholds, scannerOptions, scannerFactory, re
     if (decode.decoded) break;
   }
 
-  return { best, attempts };
+  return { best, attempts, candidates };
 }
 
 /**
@@ -122,9 +134,10 @@ export function scanWithThresholds(imageData, {
   if ((primary.best.center.confidence || 0) >= 0.1) {
     candidates.push(primary.best.center);
   }
-  if (typeof primary.best.scanner.findBullseyePatternCandidates === "function") {
-    candidates.push(...primary.best.scanner.findBullseyePatternCandidates());
-  }
+  // A real bullseye may rank strongly under one threshold while a false label
+  // pattern makes another threshold the strongest failed attempt. Preserve the
+  // seeds from every threshold and let successful Reed-Solomon decoding decide.
+  candidates.push(...primary.candidates);
 
   const seen = new Set();
   const regions = [];

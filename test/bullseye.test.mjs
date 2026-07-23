@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MaxiCodeScanner } from "../src/maxicode/scanner.js";
 
-function createScene({ width, height, centerX, centerY, bandWidth, noise = 0, seed = 1 }) {
+function createScene({ width, height, centerX, centerY, bandWidth, noise = 0, seed = 1, dots = 180 }) {
   const data = new Uint8ClampedArray(width * height * 4);
   let randomState = seed >>> 0;
   const random = () => {
@@ -29,7 +29,7 @@ function createScene({ width, height, centerX, centerY, bandWidth, noise = 0, se
   }
 
   // Add data-like dots so the target is not the only dark geometry in the image.
-  for (let dot = 0; dot < 180; dot += 1) {
+  for (let dot = 0; dot < dots; dot += 1) {
     const dotX = Math.floor(random() * width);
     const dotY = Math.floor(random() * height);
     if (Math.hypot(dotX - centerX, dotY - centerY) < bandWidth * 7.2) continue;
@@ -63,6 +63,23 @@ for (const fixture of cases) {
     assert.ok(Math.abs(center.bandWidth - fixture.bandWidth) <= fixture.bandWidth * 0.2, JSON.stringify(center));
   });
 }
+
+test("keeps one-pixel ring-pattern seeds for downsampled labels", () => {
+  const scanner = new MaxiCodeScanner(createScene({
+    width: 64,
+    height: 60,
+    centerX: 29.5,
+    centerY: 29.5,
+    bandWidth: 1,
+    noise: 0,
+    dots: 0,
+  }));
+  const candidates = scanner.findBullseyePatternCandidates();
+  assert.ok(
+    candidates.some((candidate) => Math.hypot(candidate.x - 29.5, candidate.y - 29.5) <= 3),
+    JSON.stringify(candidates.slice(0, 5)),
+  );
+});
 
 test("rejects an empty image", () => {
   const width = 240;
