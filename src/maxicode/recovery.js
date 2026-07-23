@@ -185,6 +185,106 @@ function addLowConfidenceErasures(gray, width, height, center, transform, thresh
   return erasedMap;
 }
 
+function sampleSoftDecisionEvidence(gray, width, height, center, transform, threshold) {
+  const evidence = Array.from({ length: 144 }, (_, codewordIndex) => ({
+    codewordIndex,
+    bits: [],
+  }));
+  const radius = Math.max(0.7, transform.modulePitch * 0.14);
+  const offsets = [[0, 0], [-radius, 0], [radius, 0], [0, -radius], [0, radius]];
+
+  for (let row = 0; row < MAXICODE_BITNR.length; row += 1) {
+    for (let col = 0; col < MAXICODE_BITNR[row].length; col += 1) {
+      const bitNumber = MAXICODE_BITNR[row][col];
+      if (bitNumber < 0) continue;
+      const point = orientedImagePosition(
+        center,
+        transform.modulePitch,
+        transform.angle,
+        col,
+        row,
+        transform.verticalScale,
+        transform.perspectiveX || 0,
+        transform.perspectiveY || 0,
+        transform.shear || 0,
+      );
+      const samples = offsets.map(([offsetX, offsetY]) => (
+        sampleGray(gray, width, height, point.x + offsetX, point.y + offsetY)
+      ));
+      const mean = samples.reduce((sum, value) => sum + value, 0) / samples.length;
+      const spread = Math.max(...samples) - Math.min(...samples);
+      // Low threshold margin and high local disagreement both indicate that a
+      // hard black/white decision is fragile. Lower scores are searched first.
+      const confidence = Math.max(0, Math.abs(mean - threshold) - spread * 0.45);
+      evidence[Math.floor(bitNumber / 6)].bits.push({
+        bitNumber,
+        bitOffset: bitNumber % 6,
+        row,
+        col,
+        x: point.x,
+        y: point.y,
+        mean,
+        spread,
+        confidence,
+      });
+    }
+  }
+
+  return evidence.map((entry) => {
+    const rankedBits = [...entry.bits].sort(
+      (left, right) => left.confidence - right.confidence,
+    );
+    const weakest = rankedBits.slice(0, 2);
+    return {
+      ...entry,
+      confidence: weakest.length
+        ? weakest.reduce((sum, bit) => sum + bit.confidence, 0) / weakest.length
+        : Number.POSITIVE_INFINITY,
+      weakestBits: weakest,
+    };
+  });
+}
+
+function rankSoftDecisionCandidates(evidence, sampledCodewords, erasedMap, maxPerBlock = 7) {
+  const groups = [
+    Array.from({ length: 20 }, (_, index) => index),
+    Array.from({ length: 62 }, (_, index) => 20 + index * 2),
+    Array.from({ length: 62 }, (_, index) => 21 + index * 2),
+  ];
+  return groups.flatMap((indexes, block) => indexes
+    .filter((index) => !erasedMap.has(index))
+    .map((index) => {
+      const entry = evidence[index];
+      const weakestBits = entry.weakestBits.map((bit) => ({
+        bitNumber: bit.bitNumber,
+        bitOffset: bit.bitOffset,
+        confidence: bit.confidence,
+        mean: bit.mean,
+        spread: bit.spread,
+      }));
+      const observedValue = sampledCodewords[index] & 0x3F;
+      const singleBitAlternatives = weakestBits.map((bit) => (
+        observedValue ^ (1 << (5 - bit.bitOffset))
+      ));
+      return {
+        codewordIndex: index,
+        block: block === 0 ? "primary" : block === 1 ? "secondary-even" : "secondary-odd",
+        confidence: entry.confidence,
+        observedValue,
+        weakestBits,
+        singleBitAlternatives,
+      };
+    })
+    .sort((left, right) => left.confidence - right.confidence)
+    .slice(0, maxPerBlock));
+}
+
+function retainBestSoftCandidate(candidates, candidate, limit) {
+  candidates.push(candidate);
+  candidates.sort((left, right) => right.candidateScore - left.candidateScore);
+  if (candidates.length > limit) candidates.length = limit;
+}
+
 export function findPartialBullseyeCandidates(scanner, limit = 12) {
   const minDimension = Math.min(scanner.width, scanner.height);
   const step = Math.max(5, Math.round(minDimension / 105));
@@ -221,9 +321,12 @@ export function findPartialBullseyeCandidates(scanner, limit = 12) {
 
 function recoveryDecode(decoded, sampledCodewords, erasedMap, context) {
   const erasedCodewords = [...erasedMap.keys()].sort((left, right) => left - right);
+  const softDecisionPositions = context.softDecisionCandidates
+    ? decoded.recovery.bruteForcePositions
+    : [];
   const erasureCorrections = decoded.recovery.erasureCorrections.map((entry) => {
     const evidence = erasedMap.get(entry.codewordIndex) || [];
-    if (entry.source === "bounded-error-position-search") return entry;
+    if (entry.source !== "damage-erasure-reconstruction") return entry;
     return {
       ...entry,
       source: evidence.some((item) => item.reason === "low-sampling-confidence")
@@ -247,16 +350,22 @@ function recoveryDecode(decoded, sampledCodewords, erasedMap, context) {
       ...context.transform,
     },
     recovery: {
-      kind: "aggressive-erasure-recovery",
+      kind: context.softDecisionCandidates
+        ? "soft-decision-chase-recovery"
+        : "aggressive-erasure-recovery",
       verification: "all Reed-Solomon parity checks satisfied",
       threshold: context.threshold,
       attempts: context.attempts,
-      directlySampledCodewords: 144 - erasedCodewords.length,
+      directlySampledCodewords:
+        144 - erasedCodewords.length - decoded.recovery.bruteForcePositions.length,
       erasedCodewords,
       damagedModules: Object.fromEntries(erasedMap),
       erasureCorrections,
       bruteForcePositions: decoded.recovery.bruteForcePositions,
       bruteForceAttempts: decoded.recovery.bruteForceAttempts,
+      softDecisionPositions,
+      softDecisionCandidates: context.softDecisionCandidates || [],
+      softDecisionGeometriesTested: context.softDecisionAttempts || 0,
       reedSolomonCorrectionsAfterErasureRecovery:
         decoded.recovery.reedSolomonCorrectionsAfterErasureRecovery,
       damageBand: context.band,
@@ -318,6 +427,8 @@ export function recoverDamagedMaxiCode(imageData, options = {}) {
   let attempts = 0;
   let strongestFailure = null;
   let foundAnyCenter = false;
+  const softFailures = [];
+  let softDecisionAttempts = 0;
 
   for (const threshold of thresholds) {
     let thresholdAttempts = 0;
@@ -394,6 +505,14 @@ export function recoverDamagedMaxiCode(imageData, options = {}) {
         adjustedCenter,
         transform,
       );
+      const softEvidence = sampleSoftDecisionEvidence(
+        gray,
+        imageData.width,
+        imageData.height,
+        adjustedCenter,
+        transform,
+        threshold,
+      );
 
       for (const detected of detectedBands) {
         for (const widthFactor of options.widthFactors || [0.55, 0.8, 1.05, 1.3, 1.6]) {
@@ -443,29 +562,86 @@ export function recoverDamagedMaxiCode(imageData, options = {}) {
             };
           } catch (error) {
             const candidateScore = (detected.score || 0) - Math.abs(erased.length - 28) * 0.08;
+            const softDecisionCandidates = rankSoftDecisionCandidates(
+              softEvidence,
+              codewords,
+              erasedMap,
+              options.maxSoftCandidatesPerBlock || 7,
+            );
+            const erasedSet = new Set(erased);
+            const failure = {
+              error: error?.message || String(error),
+              erasedCodewords: erased.length,
+              erasedCodewordIndexes: [...erased].sort((left, right) => left - right),
+              directlySampledCodewords: Array.from(codewords, (value, index) => (
+                erasedSet.has(index) ? null : { index, value }
+              )).filter(Boolean),
+              sampledCodewords: Array.from(codewords),
+              candidateScore,
+              threshold,
+              center: adjustedCenter,
+              damageBand: band,
+              transform,
+              verification: "failed; payload is not decoded or trusted",
+              softDecisionCandidates,
+            };
             if (!strongestFailure || candidateScore > strongestFailure.candidateScore) {
-              const erasedSet = new Set(erased);
-              strongestFailure = {
-                error: error?.message || String(error),
-                erasedCodewords: erased.length,
-                erasedCodewordIndexes: [...erased].sort((left, right) => left - right),
-                directlySampledCodewords: Array.from(codewords, (value, index) => (
-                  erasedSet.has(index) ? null : { index, value }
-                )).filter(Boolean),
-                sampledCodewords: Array.from(codewords),
-                candidateScore,
-                threshold,
-                center: adjustedCenter,
-                damageBand: band,
-                transform,
-                verification: "failed; payload is not decoded or trusted",
-              };
+              strongestFailure = failure;
             }
+            retainBestSoftCandidate(softFailures, {
+              ...failure,
+              sampledCodewords: Array.from(codewords),
+              erasedMap,
+              center: adjustedCenter,
+              transform,
+              threshold,
+              band,
+            }, options.maxSoftGeometries || 10);
           }
         }
         if (thresholdAttempts > maxThresholdAttempts) break;
       }
       if (thresholdAttempts > maxThresholdAttempts) break;
+    }
+  }
+
+  // Stage two is reliability-guided and deliberately deferred until the
+  // exhaustive geometry/erasure pass has failed. For each RS block it examines
+  // only a short list of codewords containing the weakest sampled dots. The RS
+  // solver derives replacement values and remains the sole acceptance oracle.
+  for (const candidate of softFailures) {
+    softDecisionAttempts += 1;
+    try {
+      const decoded = decodeMaxiCodeDataWithErasures(
+        candidate.sampledCodewords,
+        candidate.erasedCodewordIndexes,
+        {
+          maxUnknownErrorsPerBlock: options.maxSoftUnknownErrorsPerBlock ?? 2,
+          unknownErrorCodewordCandidates: candidate.softDecisionCandidates.map(
+            (entry) => entry.codewordIndex,
+          ),
+          positionSearchSource: "soft-decision-chase-search",
+        },
+      );
+      return {
+        ok: true,
+        center: candidate.center,
+        pitch: candidate.transform.modulePitch,
+        threshold: candidate.threshold,
+        decode: recoveryDecode(decoded, candidate.sampledCodewords, candidate.erasedMap, {
+          center: candidate.center,
+          transform: candidate.transform,
+          threshold: candidate.threshold,
+          attempts,
+          band: candidate.band,
+          softDecisionCandidates: candidate.softDecisionCandidates,
+          softDecisionAttempts,
+        }),
+        softDecisionAttempts,
+      };
+    } catch {
+      // Retain the ordinary failure observation; a soft hypothesis is never
+      // promoted unless every parity equation succeeds.
     }
   }
 
@@ -519,6 +695,7 @@ export function recoverDamagedMaxiCode(imageData, options = {}) {
   return {
     ok: false,
     attempts,
+    softDecisionAttempts,
     error: "No parity-valid recovery was found within the bounded search",
     strongestFailure,
     observations: strongestFailure

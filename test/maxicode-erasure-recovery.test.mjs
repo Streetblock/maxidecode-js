@@ -67,3 +67,43 @@ test("bounded position search distinguishes an unmarked error from known damage"
     "bounded-error-position-search",
   );
 });
+
+test("soft-decision candidates locate two additional wrong codewords", () => {
+  const erased = [1, 3, 6, 9, 12, 17];
+  const damaged = [...GOLDEN_CODEWORDS];
+  for (const index of erased) damaged[index] = (damaged[index] ^ 0x2D) & 0x3F;
+  damaged[14] ^= 0x09;
+  damaged[15] ^= 0x11;
+
+  assert.throws(() => decodeMaxiCodeDataWithErasures(damaged, erased, {
+    maxUnknownErrorsPerBlock: 1,
+  }));
+  const recovered = decodeMaxiCodeDataWithErasures(damaged, erased, {
+    maxUnknownErrorsPerBlock: 2,
+    unknownErrorCodewordCandidates: [15, 14],
+    positionSearchSource: "soft-decision-chase-search",
+  });
+
+  assert.deepEqual(recovered.correctedCodewords, GOLDEN_CODEWORDS);
+  assert.deepEqual(recovered.recovery.bruteForcePositions, [14, 15]);
+  assert.equal(
+    recovered.recovery.erasureCorrections
+      .filter((entry) => [14, 15].includes(entry.codewordIndex))
+      .every((entry) => entry.source === "soft-decision-chase-search"),
+    true,
+  );
+});
+
+test("soft-decision search does not inspect positions outside its ranked list", () => {
+  const erased = [1, 3, 6, 9, 12, 17];
+  const damaged = [...GOLDEN_CODEWORDS];
+  for (const index of erased) damaged[index] = (damaged[index] ^ 0x2D) & 0x3F;
+  damaged[14] ^= 0x09;
+  damaged[15] ^= 0x11;
+
+  assert.throws(() => decodeMaxiCodeDataWithErasures(damaged, erased, {
+    maxUnknownErrorsPerBlock: 2,
+    unknownErrorCodewordCandidates: [10, 11, 13],
+    positionSearchSource: "soft-decision-chase-search",
+  }));
+});

@@ -708,7 +708,13 @@ function solveReedSolomonErasures(received, parityCount, erasurePositions) {
   return replacements;
 }
 
-function solveErasuresWithPositionSearch(received, parityCount, erasurePositions, maxUnknownErrors) {
+function solveErasuresWithPositionSearch(
+  received,
+  parityCount,
+  erasurePositions,
+  maxUnknownErrors,
+  preferredPositions = null,
+) {
   if (erasurePositions.length > parityCount) {
     throw new ReedSolomonError("Too many erasures for the Reed-Solomon block");
   }
@@ -730,8 +736,17 @@ function solveErasuresWithPositionSearch(received, parityCount, erasurePositions
   let solved = tryPositions([]);
   if (solved) return { ...solved, attempts };
 
-  const knownPositions = Array.from({ length: received.length }, (_, index) => index)
-    .filter((index) => !erasurePositions.includes(index));
+  const erased = new Set(erasurePositions);
+  const allKnownPositions = Array.from({ length: received.length }, (_, index) => index)
+    .filter((index) => !erased.has(index));
+  // A soft-decision caller may rank a small subset from darkest/lightest module
+  // margins. Reed-Solomon still derives the replacement value; image evidence
+  // only limits and orders the error-location search.
+  const knownPositions = preferredPositions
+    ? [...new Set(preferredPositions)].filter((index) => (
+        Number.isInteger(index) && index >= 0 && index < received.length && !erased.has(index)
+      ))
+    : allKnownPositions;
   if (maxUnknownErrors >= 1 && erasurePositions.length + 2 <= parityCount) {
     for (const position of knownPositions) {
       attempts += 1;
@@ -1062,6 +1077,8 @@ function decodeMaxiCodeDataWithErasures(codewords, erasedCodewords, options = {}
   const bruteForcePositions = [];
   let bruteForceAttempts = 0;
   const maxUnknownErrors = options.maxUnknownErrorsPerBlock || 0;
+  const preferredCodewords = options.unknownErrorCodewordCandidates || null;
+  const positionSearchSource = options.positionSearchSource || "bounded-error-position-search";
 
   const repairBlock = (start, totalCodewords, parityCount, parity = null) => {
     const sourceIndexes = [];
@@ -1074,11 +1091,17 @@ function decodeMaxiCodeDataWithErasures(codewords, erasedCodewords, options = {}
     const blockErasures = sourceIndexes
       .map((sourceIndex, index) => erased.has(sourceIndex) ? index : -1)
       .filter((index) => index >= 0);
+    const localPreferredPositions = preferredCodewords
+      ? preferredCodewords
+          .map((sourceIndex) => sourceIndexes.indexOf(sourceIndex))
+          .filter((index) => index >= 0)
+      : null;
     const solved = solveErasuresWithPositionSearch(
       block,
       parityCount,
       blockErasures,
       maxUnknownErrors,
+      localPreferredPositions,
     );
     bruteForceAttempts += solved.attempts;
     for (let index = 0; index < solved.candidate.length; index += 1) {
@@ -1094,7 +1117,7 @@ function decodeMaxiCodeDataWithErasures(codewords, erasedCodewords, options = {}
         after: replacement.after,
         changed: replacement.before !== replacement.after,
         source: extraSet.has(replacement.position)
-          ? "bounded-error-position-search"
+          ? positionSearchSource
           : "damage-erasure-reconstruction",
       });
     }
@@ -1122,6 +1145,7 @@ function decodeMaxiCodeDataWithErasures(codewords, erasedCodewords, options = {}
       ),
       bruteForcePositions: bruteForcePositions.sort((left, right) => left - right),
       bruteForceAttempts,
+      positionSearchSource,
       reedSolomonCorrectionsAfterErasureRecovery: decoded.errorsCorrected,
     },
   };

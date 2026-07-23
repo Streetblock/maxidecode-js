@@ -13,6 +13,15 @@ It runs in a Web Worker so the camera and result UI remain responsive.
 6. Reconstruct the erased symbols over GF(64).
 7. Accept a result only when every remaining Reed-Solomon parity equation is satisfied.
 
+If that first pass fails, a second, bounded soft-decision stage runs on only the
+best geometric observations. It samples every module at five nearby points and
+ranks codewords by threshold margin and local disagreement. Per Reed-Solomon block,
+only the seven weakest non-erased codewords are eligible as additional error
+locations. The search tries up to two such locations; Reed-Solomon derives their
+complete 6-bit values, so the implementation does not enumerate every possible dot
+pattern. This is a reliability-guided Chase-style search layered on top of erasure
+recovery, not a replacement for it.
+
 The search never scores candidates by readable-looking text. A failed parity check
 cannot be promoted to a result by the UPS interpreter.
 
@@ -55,5 +64,8 @@ remain marked as charset hypotheses unless all five possible starting sets agree
 `assets/online findings/destroyed MaxiCode Scanner.png` yields a stable bullseye near
 `(404, 393)`, a grid rotation near `+4 degrees`, and a bright damage band near
 `-27 degrees`. The bounded recovery currently does **not** find a parity-valid payload
-while retaining the required parity reserve. The UI therefore reports the observed
-raw symbols and damage map, but correctly refuses to claim decoded shipment data.
+while retaining the required parity reserve. Ten best geometries are also subjected
+to the soft-decision stage with up to two additional error locations per RS block;
+none currently satisfies parity. The UI therefore reports the observed raw symbols,
+damage map and ranked soft candidates, but correctly refuses to claim decoded
+shipment data.
