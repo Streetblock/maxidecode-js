@@ -200,19 +200,6 @@ function drawStageBackdrop() {
     previewCtx.stroke();
   }
 
-  const cx = width / 2;
-  const cy = height / 2;
-  previewCtx.strokeStyle = "rgba(97, 210, 255, 0.16)";
-  previewCtx.lineWidth = 2;
-  previewCtx.beginPath();
-  previewCtx.arc(cx, cy, Math.min(width, height) * 0.18, 0, Math.PI * 2);
-  previewCtx.stroke();
-
-  previewCtx.strokeStyle = "rgba(247, 190, 85, 0.2)";
-  previewCtx.beginPath();
-  previewCtx.arc(cx, cy, Math.min(width, height) * 0.1, 0, Math.PI * 2);
-  previewCtx.stroke();
-
 }
 
 function drawFrame(analysis = null) {
@@ -427,6 +414,7 @@ async function loadFile(file) {
   state.sourceKind = "image";
   state.sourceName = file.name || "Loaded image";
   state.thresholdAttempt = 0;
+  els.idleState.hidden = true;
 
   const drawable = await loadDrawable(file);
   els.sourceCanvas.width = drawable.width;
@@ -514,6 +502,7 @@ async function startCamera() {
     state.sourceKind = "camera";
     state.sourceName = "Live camera";
     state.thresholdAttempt = 0;
+    els.idleState.hidden = true;
     els.cameraVideo.srcObject = stream;
     await els.cameraVideo.play();
 
