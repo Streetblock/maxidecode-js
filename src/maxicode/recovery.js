@@ -8,6 +8,7 @@ import {
   scoreOrientedGridContrast,
 } from "./scanner.js";
 import { cropImageData, cropRegionForCandidate } from "./adaptiveScan.js";
+import { interpretObservedMaxiCode } from "./partialInterpretation.js";
 
 const DEFAULT_THRESHOLDS = [112, 144, 176];
 
@@ -520,6 +521,14 @@ export function recoverDamagedMaxiCode(imageData, options = {}) {
     attempts,
     error: "No parity-valid recovery was found within the bounded search",
     strongestFailure,
-    observations: strongestFailure,
+    observations: strongestFailure
+      ? {
+          ...strongestFailure,
+          partialInterpretation: interpretObservedMaxiCode(
+            strongestFailure.sampledCodewords,
+            strongestFailure.erasedCodewordIndexes,
+          ),
+        }
+      : null,
   };
 }

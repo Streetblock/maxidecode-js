@@ -84,6 +84,44 @@ function visibleControls(value) {
     .replaceAll("\r", "<CR>\n");
 }
 
+function visibleDiagnostic(value) {
+  return visibleControls(value)
+    .replaceAll("\uFFFA", "<ECI>")
+    .replaceAll("\uFFFC", "<PAD>");
+}
+
+function formatPartialInterpretation(partial) {
+  if (!partial) return [];
+  const formatField = (name, field) => field.known
+    ? `${name}: ${field.value}`
+    : `${name}: unknown (missing CW ${field.missingCodewords.join(", ")})`;
+  const lines = [
+    "",
+    "Experimental partial interpretation (UNVERIFIED)",
+    formatField("Mode 2 postal code", partial.primary.mode2PostalCode),
+    formatField("Mode 3 postal code", partial.primary.mode3PostalCode),
+    formatField("Country code", partial.primary.countryCode),
+    formatField("Service class", partial.primary.serviceClass),
+  ];
+  for (const assumption of partial.assumptions) {
+    lines.push("", assumption.label);
+    for (const segment of assumption.segments) {
+      const range = `CW ${segment.range[0]}-${segment.range[1]}`;
+      if (segment.interpretation) {
+        lines.push(`${range} [synchronized]: ${visibleDiagnostic(segment.interpretation.text)}`);
+      } else if (segment.consensus !== undefined) {
+        lines.push(`${range} [all character sets agree]: ${visibleDiagnostic(segment.consensus)}`);
+      } else {
+        lines.push(`${range} [character set unknown]`);
+        for (const alternative of segment.alternatives) {
+          lines.push(`  set ${alternative.initialSet}: ${visibleDiagnostic(alternative.text)}`);
+        }
+      }
+    }
+  }
+  return lines;
+}
+
 function updateUpsSummary(ups) {
   const recognized = Boolean(ups?.recognized);
   els.upsSummary.hidden = !recognized;
@@ -424,7 +462,8 @@ function updateUIFromAnalysis(analysis) {
           `Detected damage angle: ${(failedRecovery.damageBand.angle * 180 / Math.PI).toFixed(1)} deg`,
           `Erased codeword indexes: ${failedRecovery.erasedCodewordIndexes.join(", ")}`,
           `Observed raw codewords: ${failedRecovery.directlySampledCodewords.map((entry) => `${entry.index}:${entry.value}`).join(" ")}`,
-          "The remaining raw symbols are observations only; no partial text was fabricated.",
+          "The fragments below are diagnostic hypotheses only and are not promoted to decoded shipment data.",
+          ...formatPartialInterpretation(failedRecovery.partialInterpretation),
         ].join("\n")
       : "-";
   }

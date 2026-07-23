@@ -45,7 +45,10 @@ A successful `decode.recovery` object distinguishes:
 
 If recovery fails, `observations` contains the strongest geometric attempt and the
 directly sampled raw codewords. Those values are explicitly unverified. No partial
-text or UPS fields are emitted from them.
+text or UPS fields are emitted as a successful result. An experimental diagnostic
+view may split uninterrupted codeword runs and show character-set alternatives:
+only the first run before an erasure is synchronized to MaxiCode Set 0; later runs
+remain marked as charset hypotheses unless all five possible starting sets agree.
 
 ## Current destroyed SurePost sample
 

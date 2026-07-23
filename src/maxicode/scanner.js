@@ -2087,6 +2087,7 @@ export class MaxiCodeScanner {
 
 export {
   MAXICODE_BITNR,
+  MAXICODE_CHARSETS,
   bitsToBytes,
   buildHexLayout,
   bytesToPrintableText,
