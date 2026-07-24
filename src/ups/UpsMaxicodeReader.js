@@ -1,4 +1,5 @@
 import { UpsMaxicodeDecoder } from "./UpsMaxicodeDecoder.js";
+import { createUpsDomainModelFromMaxicode } from "./UpsDomainModel.js";
 
 /**
  * Interprets the ANSI MH10.8.3 envelope returned by the MaxiCode decoder.
@@ -43,6 +44,7 @@ export class UpsMaxicodeReader {
         primary: null,
         secondary: null,
         compressed: null,
+        domain: null,
       };
     }
 
@@ -61,6 +63,11 @@ export class UpsMaxicodeReader {
       secondary: routing.secondary,
       compressed,
     });
+    const domain = createUpsDomainModelFromMaxicode({
+      destination: structured.destination,
+      shipment: structured.shipment,
+      serviceCode: routing.primary.serviceClass,
+    });
     return {
       recognized: true,
       standardEnvelope: hasStandardEnvelope,
@@ -73,6 +80,7 @@ export class UpsMaxicodeReader {
       compressed,
       format05,
       ...structured,
+      domain,
     };
   }
 
@@ -198,6 +206,11 @@ export class UpsMaxicodeReader {
       shipToState: shipToState || null,
       unknownFields,
     }, compressed: null, format05: null });
+    const domain = createUpsDomainModelFromMaxicode({
+      destination: structured.destination,
+      shipment: structured.shipment,
+      serviceCode: primary.serviceClass,
+    });
 
     return {
       recognized: true,
@@ -225,6 +238,7 @@ export class UpsMaxicodeReader {
       compressed: null,
       format05: null,
       ...structured,
+      domain,
       warnings: [
         "Recovered a UPS 01 payload without its ANSI structured-message header.",
         "Postal and country codes are heuristic recoveries from mispacked Mode 3 primary fields.",
