@@ -56,10 +56,10 @@ const vectors = [
     name: "Los Angeles SurePost label",
     payload: "1$'T7J-YTG \x1c3DS%PC\x1d'+,#L70H%.7%-\rG&VXX\x1d,%H(J\r",
     hex: "1022eda97b30decc74e631479b2db7513ded87c17258bd3b9b0b3b9808ba6702",
-    text: `1\x1d\x1d3585 S VERMONT AVE\x1d\x1d\x1dU`,
+    text: `1\x1d\x1d3585 S VERMONT AVE\x1d\x1d\x1dUSPS 90006\x1d144\x1d\x1dN4\x1d1/`,
     complete: false,
-    bitsConsumed: 120,
-    trailingBits: "000100111101111011011000011111000001011100100101100010111101001110111001101100001011001110111001100000001000101110100110011100000010",
+    bitsConsumed: 244,
+    trailingBits: "00000010",
   },
   {
     name: "Avery Monarch compressed MaxiCode sample",
