@@ -1,13 +1,25 @@
 /**
  * Complete active substitution table transcribed from US7039496B2,
- * figures 4A-4H. The 35 trailing `0x0` padding rows in fig. 4H have
+ * figures 4A-4H. The 36 trailing `0x0` padding rows in fig. 4H have
  * bit length zero and are intentionally omitted.
  *
  * `bits` contains the low `bitLength` bits of the 32-bit value printed
- * in the patent. Table order is retained where available; four rows that
- * OCR skipped were visually transcribed from the 300-DPI figure render.
+ * in the patent. Ten rows that OCR skipped were visually transcribed
+ * from the 300-DPI figure render and restored to their original table order.
+ *
+ * Every exported row also preserves the three numeric columns printed after
+ * the 32-bit value in figs. 4A-4H:
+ * - `bitLength`: number of significant low bits in the printed value;
+ * - `patentAuxiliary`: the patent's unnamed middle column (zero in all rows);
+ * - `unsubstitutedBitLength`: length obtained from the corresponding
+ *   single-character codes (zero for a single-character row).
+ *
+ * Fig. 4H ends with 35 inactive `{ "0x0", 0x0, 0, 0, 0 }` padding rows.
+ * They are counted in the exported table metadata, but deliberately excluded
+ * from the decoding dictionary because an empty code word can never match
+ * safely and carries no substitution.
  */
-export const FORMAT_07_DICTIONARY = Object.freeze([
+const ACTIVE_SUBSTITUTIONS = Object.freeze([
   Object.freeze({ token: "\u001d", bits: "110", figure: "4A" }),
   Object.freeze({ token: " ", bits: "01", figure: "4A" }),
   Object.freeze({ token: "#", bits: "00000000", figure: "4A" }),
@@ -170,6 +182,7 @@ export const FORMAT_07_DICTIONARY = Object.freeze([
   Object.freeze({ token: "CRK", bits: "101100010000010111", figure: "4D" }),
   Object.freeze({ token: "CRSE", bits: "00000010001001110000010", figure: "4D" }),
   Object.freeze({ token: "CRST", bits: "0000001000100111011011", figure: "4D" }),
+  Object.freeze({ token: "CSWY", bits: "00000010001001110111", figure: "4D" }),
   Object.freeze({ token: "CT", bits: "1111011011", figure: "4D" }),
   Object.freeze({ token: "CTR", bits: "0010001110", figure: "4D" }),
   Object.freeze({ token: "CTRS", bits: "001101101001101010", figure: "4D" }),
@@ -180,6 +193,7 @@ export const FORMAT_07_DICTIONARY = Object.freeze([
   Object.freeze({ token: "D", bits: "101000", figure: "4D" }),
   Object.freeze({ token: "DEPT", bits: "101100001000", figure: "4D" }),
   Object.freeze({ token: "DR", bits: "10011100", figure: "4D" }),
+  Object.freeze({ token: "DRS", bits: "1011000100000100", figure: "4D" }),
   Object.freeze({ token: "DV", bits: "1011000100001", figure: "4D" }),
   Object.freeze({ token: "E", bits: "101010", figure: "4D" }),
   Object.freeze({ token: "EA", bits: "111011011", figure: "4D" }),
@@ -215,6 +229,7 @@ export const FORMAT_07_DICTIONARY = Object.freeze([
   Object.freeze({ token: "HBR", bits: "0000001000101111", figure: "4D" }),
   Object.freeze({ token: "HIGH", bits: "10110110001", figure: "4D" }),
   Object.freeze({ token: "HILL", bits: "10011011110", figure: "4E" }),
+  Object.freeze({ token: "HLS", bits: "00000010001001100", figure: "4E" }),
   Object.freeze({ token: "HNGR", bits: "001101101001101001001", figure: "4E" }),
   Object.freeze({ token: "HOLW", bits: "00000010001001110001", figure: "4E" }),
   Object.freeze({ token: "HOME", bits: "111011001010", figure: "4E" }),
@@ -228,11 +243,13 @@ export const FORMAT_07_DICTIONARY = Object.freeze([
   Object.freeze({ token: "ING", bits: "00001010", figure: "4E" }),
   Object.freeze({ token: "INLT", bits: "001101101001101001011011", figure: "4E" }),
   Object.freeze({ token: "IO", bits: "10000011101", figure: "4E" }),
+  Object.freeze({ token: "ION", bits: "101001001", figure: "4E" }),
   Object.freeze({ token: "IR", bits: "100000001", figure: "4E" }),
   Object.freeze({ token: "IS", bits: "00100001", figure: "4E" }),
   Object.freeze({ token: "ISLE", bits: "000110111101111", figure: "4E" }),
   Object.freeze({ token: "ISS", bits: "001101101000", figure: "4E" }),
   Object.freeze({ token: "IT", bits: "111011010", figure: "4E" }),
+  Object.freeze({ token: "IVE", bits: "100111101", figure: "4E" }),
   Object.freeze({ token: "J", bits: "00101110", figure: "4E" }),
   Object.freeze({ token: "JCT", bits: "000110111101110000", figure: "4E" }),
   Object.freeze({ token: "JCTS", bits: "00110110100110100101100", figure: "4E" }),
@@ -274,10 +291,12 @@ export const FORMAT_07_DICTIONARY = Object.freeze([
   Object.freeze({ token: "OPAS", bits: "000000100010011100001", figure: "4F" }),
   Object.freeze({ token: "OR", bits: "0000111", figure: "4F" }),
   Object.freeze({ token: "ORCH", bits: "00110110100111", figure: "4F" }),
+  Object.freeze({ token: "OU", bits: "100110010", figure: "4F" }),
   Object.freeze({ token: "OUR", bits: "10110000101", figure: "4F" }),
   Object.freeze({ token: "OUT", bits: "10011011111", figure: "4F" }),
   Object.freeze({ token: "OVAL", bits: "11110110100001000", figure: "4F" }),
   Object.freeze({ token: "P", bits: "11100010", figure: "4F" }),
+  Object.freeze({ token: "PARC", bits: "001011111100", figure: "4F" }),
   Object.freeze({ token: "PARK", bits: "0011001001", figure: "4F" }),
   Object.freeze({ token: "PASS", bits: "00101101010101", figure: "4F" }),
   Object.freeze({ token: "PATH", bits: "1011000100000110", figure: "4F" }),
@@ -304,6 +323,7 @@ export const FORMAT_07_DICTIONARY = Object.freeze([
   Object.freeze({ token: "RDG", bits: "100010010001111001", figure: "4F" }),
   Object.freeze({ token: "RDS", bits: "1011100100111", figure: "4F" }),
   Object.freeze({ token: "REAR", bits: "0011011010011011", figure: "4F" }),
+  Object.freeze({ token: "REET", bits: "111000010", figure: "4F" }),
   Object.freeze({ token: "RIV", bits: "001001100", figure: "4F" }),
   Object.freeze({ token: "RM", bits: "1000100111", figure: "4F" }),
   Object.freeze({ token: "RNCH", bits: "0011011010011010010001", figure: "4F" }),
@@ -328,6 +348,7 @@ export const FORMAT_07_DICTIONARY = Object.freeze([
   Object.freeze({ token: "SLIP", bits: "101100010000010110", figure: "4G" }),
   Object.freeze({ token: "SMT", bits: "0011011010011010001", figure: "4G" }),
   Object.freeze({ token: "SOUT", bits: "1010110111", figure: "4G" }),
+  Object.freeze({ token: "SP", bits: "000100111", figure: "4G" }),
   Object.freeze({ token: "SPC", bits: "00000010001001101", figure: "4G" }),
   Object.freeze({ token: "SPGS", bits: "0011011010011010000", figure: "4G" }),
   Object.freeze({ token: "SPUR", bits: "0000001000101101", figure: "4G" }),
@@ -366,6 +387,7 @@ export const FORMAT_07_DICTIONARY = Object.freeze([
   Object.freeze({ token: "UPPR", bits: "0011011010011010010111", figure: "4H" }),
   Object.freeze({ token: "UPS", bits: "10001001000010", figure: "4H" }),
   Object.freeze({ token: "V", bits: "10011000", figure: "4H" }),
+  Object.freeze({ token: "VIA", bits: "0001001100001", figure: "4H" }),
   Object.freeze({ token: "VLG", bits: "100010010000111011", figure: "4H" }),
   Object.freeze({ token: "VLY", bits: "001101101001101011", figure: "4H" }),
   Object.freeze({ token: "W", bits: "1110111", figure: "4H" }),
@@ -378,12 +400,40 @@ export const FORMAT_07_DICTIONARY = Object.freeze([
   Object.freeze({ token: "XING", bits: "100010010001011", figure: "4H" }),
   Object.freeze({ token: "Y", bits: "1011010", figure: "4H" }),
   Object.freeze({ token: "Z", bits: "000001110", figure: "4H" }),
-  Object.freeze({ token: "CSWY", bits: "00000010001001110111", figure: "4D" }),
-  Object.freeze({ token: "DRS", bits: "1011000100000100", figure: "4D" }),
-  Object.freeze({ token: "HLS", bits: "00000010001001100", figure: "4E" }),
-  Object.freeze({ token: "ION", bits: "101001001", figure: "4E" }),
-  Object.freeze({ token: "IVE", bits: "100111101", figure: "4E" }),
-  Object.freeze({ token: "OU", bits: "100110010", figure: "4F" }),
-  Object.freeze({ token: "PARC", bits: "001011111100", figure: "4F" }),
-  Object.freeze({ token: "VIA", bits: "0001001100001", figure: "4H" }),
 ]);
+
+const SINGLE_CHARACTER_BIT_LENGTHS = new Map(
+  ACTIVE_SUBSTITUTIONS
+    .filter(({ token }) => [...token].length === 1)
+    .map(({ token, bits }) => [token, bits.length]),
+);
+
+/** Number of zero-length padding rows printed at the end of patent fig. 4H. */
+export const FORMAT_07_PADDING_ROW_COUNT = 36;
+
+/** Total rows printed in patent figs. 4A-4H, including inactive padding. */
+export const FORMAT_07_PATENT_ROW_COUNT =
+  ACTIVE_SUBSTITUTIONS.length + FORMAT_07_PADDING_ROW_COUNT;
+
+export const FORMAT_07_DICTIONARY = Object.freeze(
+  ACTIVE_SUBSTITUTIONS.map((entry, index) => {
+    const characters = [...entry.token];
+    const unsubstitutedBitLength = characters.length === 1
+      ? 0
+      : characters.reduce((total, character) => {
+          const characterBitLength = SINGLE_CHARACTER_BIT_LENGTHS.get(character);
+          if (characterBitLength === undefined) {
+            throw new Error(`Patent table lacks a single-character row for ${JSON.stringify(character)}.`);
+          }
+          return total + characterBitLength;
+        }, 0);
+
+    return Object.freeze({
+      ...entry,
+      bitLength: entry.bits.length,
+      patentAuxiliary: 0,
+      unsubstitutedBitLength,
+      patentRow: index + 1,
+    });
+  }),
+);
