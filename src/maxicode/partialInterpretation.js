@@ -191,33 +191,83 @@ function interpretLogicalMessage(logicalIndexes, codewords, erased, label) {
   };
 }
 
+function mode23CarrierEvidence(assumption) {
+  const observedRuns = assumption.segments.map((segment) => ({
+    range: segment.range,
+    synchronized: Boolean(segment.interpretation || segment.consensus !== undefined),
+    text: segment.interpretation?.text
+      ?? segment.consensus
+      ?? segment.alternatives?.find((candidate) => candidate.initialSet === 0)?.text
+      ?? "",
+  }));
+  const header = observedRuns.find((run) => run.text.includes(`[)>\x1e01\x1d96`));
+  const carrier = observedRuns
+    .map((run) => ({ ...run, match: run.text.match(/([A-Z0-9]*)\x1d(UPSN)\x1d([A-Z0-9]*)/) }))
+    .find((run) => run.match);
+  const julian = observedRuns
+    .map((run) => ({ ...run, match: run.text.match(/\x1d(\d{3})(?:\D|$)/) }))
+    .find((run) => run.match);
+
+  return {
+    verified: false,
+    warning: "Structural carrier evidence only; Reed-Solomon verification failed.",
+    ansiHeader: header ? {
+      value: `[)>\x1e01\x1d96`,
+      range: header.range,
+      synchronized: header.synchronized,
+    } : null,
+    trackingSuffix: carrier?.match[1] ? {
+      value: carrier.match[1],
+      range: carrier.range,
+      synchronized: carrier.synchronized,
+    } : null,
+    scac: carrier ? {
+      value: carrier.match[2],
+      range: carrier.range,
+      synchronized: carrier.synchronized,
+    } : null,
+    shipperIdFragment: carrier?.match[3] ? {
+      value: carrier.match[3],
+      range: carrier.range,
+      synchronized: carrier.synchronized,
+    } : null,
+    julianDayFragment: julian ? {
+      value: julian.match[1],
+      range: julian.range,
+      synchronized: julian.synchronized,
+    } : null,
+  };
+}
+
 export function interpretObservedMaxiCode(codewords, erasedCodewords) {
   const values = Array.from(codewords, (value) => value & 0x3F);
   const erased = new Set(erasedCodewords);
+  const assumptions = [
+    interpretLogicalMessage(
+      Array.from({ length: 84 }, (_, index) => 20 + index),
+      values,
+      erased,
+      "Modes 2/3 secondary message",
+    ),
+    interpretLogicalMessage(
+      [...Array.from({ length: 9 }, (_, index) => 1 + index), ...Array.from({ length: 84 }, (_, index) => 20 + index)],
+      values,
+      erased,
+      "Mode 4 message",
+    ),
+    interpretLogicalMessage(
+      [...Array.from({ length: 9 }, (_, index) => 1 + index), ...Array.from({ length: 68 }, (_, index) => 20 + index)],
+      values,
+      erased,
+      "Mode 5 message",
+    ),
+  ];
   return {
     verified: false,
     warning: "Diagnostic interpretation only; Reed-Solomon verification failed.",
     primary: primaryInterpretations(values, erased),
-    assumptions: [
-      interpretLogicalMessage(
-        Array.from({ length: 84 }, (_, index) => 20 + index),
-        values,
-        erased,
-        "Modes 2/3 secondary message",
-      ),
-      interpretLogicalMessage(
-        [...Array.from({ length: 9 }, (_, index) => 1 + index), ...Array.from({ length: 84 }, (_, index) => 20 + index)],
-        values,
-        erased,
-        "Mode 4 message",
-      ),
-      interpretLogicalMessage(
-        [...Array.from({ length: 9 }, (_, index) => 1 + index), ...Array.from({ length: 68 }, (_, index) => 20 + index)],
-        values,
-        erased,
-        "Mode 5 message",
-      ),
-    ],
+    carrierEvidence: mode23CarrierEvidence(assumptions[0]),
+    assumptions,
   };
 }
 

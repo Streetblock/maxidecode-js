@@ -186,17 +186,17 @@
                   <strong id="pitchValue">-</strong>
                 </div>
                 <div class="metric">
-                  <span>Bytes</span>
+                  <span id="bytesLabel">Bytes</span>
                   <strong id="bytesValue">-</strong>
                 </div>
               </div>
 
-              <details class="raw-bytes" open>
-                <summary>Raw bytes</summary>
+              <details class="raw-bytes" id="rawBytesDetails" open>
+                <summary id="rawBytesSummary">Raw bytes</summary>
                 <pre id="rawBytes">-</pre>
               </details>
 
-              <details class="raw-bytes">
+              <details class="raw-bytes" id="rawMessageDetails">
                 <summary>Raw decoded Secondary Message</summary>
                 <pre id="rawMessage">-</pre>
               </details>
@@ -204,6 +204,11 @@
               <details class="raw-bytes recovery-report" id="recoveryDetails" hidden open>
                 <summary>Recovery provenance</summary>
                 <pre id="recoveryReport">-</pre>
+              </details>
+
+              <details class="raw-bytes recovery-report" id="recoveryAdvancedDetails" hidden>
+                <summary>Advanced character-set hypotheses</summary>
+                <pre id="recoveryAdvancedReport">-</pre>
               </details>
 
               <div class="result-note" id="resultNote">Ready for an image.</div>

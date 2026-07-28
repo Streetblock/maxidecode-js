@@ -34,8 +34,12 @@ const els = {
   modeValue: document.getElementById("modeValue"),
   centerValue: document.getElementById("centerValue"),
   pitchValue: document.getElementById("pitchValue"),
+  bytesLabel: document.getElementById("bytesLabel"),
   bytesValue: document.getElementById("bytesValue"),
+  rawBytesDetails: document.getElementById("rawBytesDetails"),
+  rawBytesSummary: document.getElementById("rawBytesSummary"),
   rawBytes: document.getElementById("rawBytes"),
+  rawMessageDetails: document.getElementById("rawMessageDetails"),
   rawMessage: document.getElementById("rawMessage"),
   resultNote: document.getElementById("resultNote"),
   fileInput: document.getElementById("fileInput"),
@@ -50,6 +54,8 @@ const els = {
   recoveryBtn: document.getElementById("recoveryBtn"),
   recoveryDetails: document.getElementById("recoveryDetails"),
   recoveryReport: document.getElementById("recoveryReport"),
+  recoveryAdvancedDetails: document.getElementById("recoveryAdvancedDetails"),
+  recoveryAdvancedReport: document.getElementById("recoveryAdvancedReport"),
   dropzone: document.getElementById("dropzone"),
   previewCanvas: document.getElementById("previewCanvas"),
   idleState: document.getElementById("idleState"),
@@ -95,13 +101,34 @@ function formatPartialInterpretation(partial) {
   const formatField = (name, field) => field.known
     ? `${name}: ${field.value}`
     : `${name}: unknown (missing CW ${field.missingCodewords.join(", ")})`;
+  const evidence = partial.carrierEvidence || {};
+  const formatEvidence = (name, field) => field
+    ? `${name}: ${visibleDiagnostic(field.value)} (CW ${field.range[0]}-${field.range[1]}, ${field.synchronized ? "synchronized" : "set-0 hypothesis"})`
+    : `${name}: not observed`;
   const lines = [
     "",
     "Experimental partial interpretation (UNVERIFIED)",
+    "Observed carrier fragments",
+    formatEvidence("ANSI header", evidence.ansiHeader),
+    formatEvidence("Tracking suffix", evidence.trackingSuffix),
+    formatEvidence("Carrier SCAC", evidence.scac),
+    formatEvidence("Shipper ID fragment", evidence.shipperIdFragment),
+    formatEvidence("Julian day fragment", evidence.julianDayFragment),
+    "",
+    "Unavailable primary fields",
     formatField("Mode 2 postal code", partial.primary.mode2PostalCode),
     formatField("Mode 3 postal code", partial.primary.mode3PostalCode),
     formatField("Country code", partial.primary.countryCode),
     formatField("Service class", partial.primary.serviceClass),
+  ];
+  return lines;
+}
+
+function formatAdvancedPartialInterpretation(partial) {
+  if (!partial) return [];
+  const lines = [
+    "Advanced character-set hypotheses (UNVERIFIED)",
+    "These alternatives are diagnostic only and are not promoted to shipment data.",
   ];
   for (const assumption of partial.assumptions) {
     lines.push("", assumption.label);
@@ -361,17 +388,24 @@ function updateUIFromAnalysis(analysis) {
     els.modeValue.textContent = "-";
     els.centerValue.textContent = "-";
     els.pitchValue.textContent = "-";
+    els.bytesLabel.textContent = "Bytes";
     els.bytesValue.textContent = "-";
+    els.rawBytesDetails.open = true;
+    els.rawBytesSummary.textContent = "Raw bytes";
     els.rawBytes.textContent = "-";
+    els.rawMessageDetails.hidden = false;
     els.resultNote.textContent = "Ready for an image.";
     els.recoveryBtn.hidden = true;
     els.recoveryDetails.hidden = true;
     els.recoveryReport.textContent = "-";
+    els.recoveryAdvancedDetails.hidden = true;
+    els.recoveryAdvancedReport.textContent = "-";
     els.idleState.hidden = false;
     drawStageBackdrop();
     return;
   }
 
+  const verifiedDecode = Boolean(analysis.decode?.decoded);
   const confidencePct = Math.round((analysis.confidence ?? 0) * 1000) / 10;
   const aggressiveRecovery = Boolean(analysis.decode?.recovery);
   const failedRecovery = analysis.recoveryAttempt?.observations || null;
@@ -409,31 +443,56 @@ function updateUIFromAnalysis(analysis) {
       "UPS interpretation",
       formatUpsResult(analysis.ups),
     ].join("\n");
-  } else {
+  } else if (verifiedDecode) {
     els.decodedText.textContent = analysis.decode?.text
       ? visibleControls(analysis.decode.text)
       : analysis.decode?.error || "No readable payload found.";
+  } else {
+    els.decodedText.textContent = [
+      "Reed-Solomon verification failed.",
+      "No decoded MaxiCode payload is available.",
+      "Run experimental recovery to inspect explicitly unverified fragments.",
+    ].join("\n");
   }
-  const rawDecodedMessage = analysis.decode?.secondaryText ?? analysis.decode?.text;
+  const rawDecodedMessage = verifiedDecode
+    ? analysis.decode?.secondaryText ?? analysis.decode?.text
+    : null;
   els.rawMessage.textContent = rawDecodedMessage ? visibleControls(rawDecodedMessage) : "-";
   const rotation = Math.round((analysis.decode?.rotation || 0) * 10) / 10;
-  els.modeValue.textContent = analysis.decode?.mode
+  els.modeValue.textContent = verifiedDecode && analysis.decode?.mode
     ? `Mode ${analysis.decode.mode} · ${rotation}°`
-    : analysis.decode?.modeGuess || "-";
+    : analysis.center.found ? "Unknown - Reed-Solomon failed" : "Unknown";
   els.centerValue.textContent = analysis.center.found
     ? `${analysis.center.x.toFixed(1)}, ${analysis.center.y.toFixed(1)}`
     : "Not found";
   els.pitchValue.textContent = `${analysis.pitch.toFixed(2)} px`;
+  els.bytesLabel.textContent = verifiedDecode ? "Payload bytes" : "Sample bytes";
   els.bytesValue.textContent = analysis.decode?.bytes?.length ? `${analysis.decode.bytes.length}` : "-";
+  els.rawBytesDetails.open = verifiedDecode;
+  els.rawBytesSummary.textContent = verifiedDecode
+    ? "Verified MaxiCode payload bytes"
+    : "Unverified sampled bytes (before Reed-Solomon)";
   els.rawBytes.textContent = analysis.decode?.bytes?.length
     ? analysis.decode.bytes
         .map((byte, index) => `${index.toString(16).padStart(2, "0")} ${byte.toString(16).padStart(2, "0")}`)
         .join("  ")
     : "-";
+  els.rawMessageDetails.hidden = !verifiedDecode;
   els.recoveryBtn.hidden = Boolean(analysis.decode?.decoded) || !sourceCanvasHasContent();
   els.recoveryBtn.disabled = state.recoveryInFlight;
   els.recoveryBtn.textContent = state.recoveryInFlight ? "Recovery running..." : "Recover damaged code";
   els.recoveryDetails.hidden = !aggressiveRecovery && !failedRecovery;
+  els.recoveryAdvancedDetails.hidden = !failedRecovery?.partialInterpretation;
+  if (failedRecovery?.partialInterpretation) els.recoveryAdvancedDetails.open = false;
+  els.recoveryAdvancedReport.textContent = failedRecovery?.partialInterpretation
+    ? [
+        `Erased codeword indexes: ${failedRecovery.erasedCodewordIndexes.join(", ")}`,
+        `Ranked soft-decision codewords: ${(failedRecovery.softDecisionCandidates || []).map((entry) => entry.codewordIndex).join(", ")}`,
+        `Observed raw codewords: ${failedRecovery.directlySampledCodewords.map((entry) => `${entry.index}:${entry.value}`).join(" ")}`,
+        "",
+        ...formatAdvancedPartialInterpretation(failedRecovery.partialInterpretation),
+      ].join("\n")
+    : "-";
   if (aggressiveRecovery) {
     const recovery = analysis.decode.recovery;
     const changed = recovery.erasureCorrections.filter((entry) => entry.changed).length;
@@ -464,9 +523,6 @@ function updateUIFromAnalysis(analysis) {
           `Directly sampled, unverified codewords: ${failedRecovery.directlySampledCodewords.length}`,
           `Marked as destroyed (erasures): ${failedRecovery.erasedCodewordIndexes.length}`,
           `Detected damage angle: ${(failedRecovery.damageBand.angle * 180 / Math.PI).toFixed(1)} deg`,
-          `Erased codeword indexes: ${failedRecovery.erasedCodewordIndexes.join(", ")}`,
-          `Ranked soft-decision codewords: ${(failedRecovery.softDecisionCandidates || []).map((entry) => entry.codewordIndex).join(", ")}`,
-          `Observed raw codewords: ${failedRecovery.directlySampledCodewords.map((entry) => `${entry.index}:${entry.value}`).join(" ")}`,
           "The fragments below are diagnostic hypotheses only and are not promoted to decoded shipment data.",
           ...formatPartialInterpretation(failedRecovery.partialInterpretation),
         ].join("\n")

@@ -29,3 +29,19 @@ test("does not fabricate primary fields whose source codewords are erased", () =
   assert.ok(result.primary.countryCode.missingCodewords.includes(8));
 });
 
+test("extracts structurally plausible UPS carrier fragments without verifying them", () => {
+  const codewords = new Array(144).fill(33);
+  codewords.splice(20, 11, 59, 42, 41, 59, 40, 30, 48, 49, 29, 57, 54);
+  codewords.splice(38, 14, 53, 53, 50, 29, 21, 16, 19, 14, 29, 51, 6, 52, 23, 51);
+  codewords.splice(53, 4, 29, 48, 49, 53);
+
+  const result = interpretObservedMaxiCode(codewords, [31, 34, 35, 36, 37, 52]);
+
+  assert.equal(result.carrierEvidence.verified, false);
+  assert.equal(result.carrierEvidence.ansiHeader.value, `[)>\x1e01\x1d96`);
+  assert.equal(result.carrierEvidence.trackingSuffix.value, "552");
+  assert.equal(result.carrierEvidence.scac.value, "UPSN");
+  assert.equal(result.carrierEvidence.shipperIdFragment.value, "3F4W3");
+  assert.equal(result.carrierEvidence.julianDayFragment.value, "015");
+});
+
