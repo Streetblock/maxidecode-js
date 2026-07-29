@@ -128,12 +128,3 @@ test("marks missing and truncated Format 07 slots without inventing values", () 
   assert.equal(partial.fields.records.shipToAddressLine1.status, "partial");
   assert.equal(partial.fields.records.shipToAddressLine1.value, null);
 });
-
-test("resolves the patent table's OA/HWY prefix overlap by longest match", () => {
-  const dictionary = UpsMaxicodeDecoder.FORMAT_07_DICTIONARY;
-  const oa = dictionary.find((entry) => entry.token === "OA");
-  const hwy = dictionary.find((entry) => entry.token === "HWY");
-
-  assert.equal(hwy.bits.startsWith(oa.bits), true);
-  assert.equal(hwy.bits.length > oa.bits.length, true);
-});

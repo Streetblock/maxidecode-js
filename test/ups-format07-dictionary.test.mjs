@@ -32,7 +32,9 @@ test("preserves representative and visually verified rows", () => {
     "00": ["11100000", "4A"],
     "BOX": ["1000001000", "4C"],
     "DRS": ["1011000100000100", "4D"],
+    "HWY": ["0011000001", "4E"],
     "ION": ["101001001", "4E"],
+    "OA": ["00010000", "4F"],
     "PARC": ["001011111100", "4F"],
     "REET": ["111000010", "4F"],
     "SP": ["000100111", "4G"],
@@ -46,6 +48,8 @@ test("preserves representative and visually verified rows", () => {
 });
 
 test("preserves every numeric column printed in the patent table", () => {
+  assert.equal(byToken.get("HWY").bitLength, 10);
+  assert.equal(byToken.get("OA").bitLength, 8);
   assert.deepEqual(
     numericColumns(byToken.get("00")),
     { bitLength: 8, patentAuxiliary: 0, unsubstitutedBitLength: 28 },
@@ -95,7 +99,7 @@ test("assigns one unique bit value to each substitution row", () => {
   assert.equal(new Set(FORMAT_07_DICTIONARY.map((entry) => entry.bits)).size, 380);
 });
 
-test("documents why the patent table cannot be decoded as a simple prefix trie", () => {
+test("forms a prefix-free substitution code", () => {
   const conflicts = FORMAT_07_DICTIONARY.flatMap((shortEntry) =>
     FORMAT_07_DICTIONARY
       .filter(
@@ -105,5 +109,5 @@ test("documents why the patent table cannot be decoded as a simple prefix trie",
       .map((longEntry) => `${shortEntry.token}->${longEntry.token}`),
   );
 
-  assert.deepEqual(conflicts, ["OA->HWY"]);
+  assert.deepEqual(conflicts, []);
 });
