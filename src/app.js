@@ -867,7 +867,8 @@ async function runAggressiveRecovery() {
 
   let ups = null;
   try {
-    ups = result.decode.text ? upsReader.read(result.decode.text) : null;
+    const carrierMessage = result.decode.ansiText ?? result.decode.text;
+    ups = carrierMessage ? upsReader.read(carrierMessage) : null;
   } catch (error) {
     ups = { recognized: false, error: error?.message || String(error) };
   }
