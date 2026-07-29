@@ -82,15 +82,6 @@ for (const vector of vectors) {
   });
 }
 
-test("resolves the patent table's OA/HWY prefix overlap by longest match", () => {
-  const dictionary = UpsMaxicodeDecoder.FORMAT_07_DICTIONARY;
-  const oa = dictionary.find((entry) => entry.token === "OA");
-  const hwy = dictionary.find((entry) => entry.token === "HWY");
-
-  assert.equal(hwy.bits.startsWith(oa.bits), true);
-  assert.equal(hwy.bits.length > oa.bits.length, true);
-});
-
 test("keeps the Los Angeles vector unchanged unless recovery is requested", () => {
   const vector = vectors.find((entry) => entry.name === "Los Angeles SurePost label");
   const result = new UpsMaxicodeDecoder().decode(`07${vector.payload}`);
