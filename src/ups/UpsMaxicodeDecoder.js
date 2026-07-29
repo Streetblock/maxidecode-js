@@ -5,9 +5,9 @@ import { FORMAT_07_DICTIONARY } from "./format07Dictionary.js";
  *
  * US7039496B2 supplies the substitution rows (figs. 4A-4H), the 55-symbol
  * transport alphabet and the inverse processing stages. The patent does not
- * spell out digit order, bit framing or the one non-prefix table collision.
- * Those interoperability details are verified below against two independent
- * 45-symbol scans supplied with their original UPS labels.
+ * spell out digit order or bit framing. Those interoperability details are
+ * verified below against independent 45-symbol scans supplied with their
+ * original UPS labels.
  * See col. 8, lines 6-21 (Google Patents paragraphs [0071]-[0073]).
  */
 export class UpsMaxicodeDecoder {
@@ -80,8 +80,7 @@ export class UpsMaxicodeDecoder {
    * vectors: each begins with header value 1 and the remainder reproduces the
    * printed address in its original spelling and field separators.
    *
-   * Fig. 4 has one prefix overlap (OA/HWY). Matching the longest available
-   * value is deterministic and reproduces both vectors. Numeric pairs such as
+   * The values in figs. 4A-4H form a prefix-free code. Numeric pairs such as
    * `00` are ordinary table tokens and therefore expand without a second pass.
    */
   static decodeSubstitutions(bytes, dictionary = FORMAT_07_DICTIONARY) {
@@ -98,9 +97,7 @@ export class UpsMaxicodeDecoder {
       .join("");
     const headerBits = framedBits.slice(0, 4);
     const payloadBits = framedBits.slice(4);
-    const entries = [...dictionary].sort(
-      (left, right) => right.bits.length - left.bits.length,
-    );
+    const entries = [...dictionary];
     const tokens = [];
     const tokenTrace = [];
     let offset = 0;
@@ -188,7 +185,6 @@ export class UpsMaxicodeDecoder {
         interoperabilityAssumptions: [
           "32-byte stream is read most-significant bit first",
           "first four bits are framing and the remaining 252 bits are substitutions",
-          "when table values overlap, the longest matching value wins",
         ],
       },
     };

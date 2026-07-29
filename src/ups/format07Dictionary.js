@@ -234,7 +234,7 @@ const ACTIVE_SUBSTITUTIONS = Object.freeze([
   Object.freeze({ token: "HOLW", bits: "00000010001001110001", figure: "4E" }),
   Object.freeze({ token: "HOME", bits: "111011001010", figure: "4E" }),
   Object.freeze({ token: "HTS", bits: "1011100100110", figure: "4E" }),
-  Object.freeze({ token: "HWY", bits: "0001000001", figure: "4E" }),
+  Object.freeze({ token: "HWY", bits: "0011000001", figure: "4E" }),
   Object.freeze({ token: "I", bits: "001111", figure: "4E" }),
   Object.freeze({ token: "IA", bits: "111100000", figure: "4E" }),
   Object.freeze({ token: "IN", bits: "0001110", figure: "4E" }),
