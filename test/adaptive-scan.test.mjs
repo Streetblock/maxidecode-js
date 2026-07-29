@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { scanWithThresholds } from "../src/maxicode/adaptiveScan.js";
+import {
+  AUTO_THRESHOLD_CANDIDATES,
+  scanWithThresholds,
+} from "../src/maxicode/adaptiveScan.js";
+
+test("includes a pale web-label fallback in the automatic threshold schedule", () => {
+  assert.deepEqual(AUTO_THRESHOLD_CANDIDATES, [128, 144, 152, 180, 96]);
+});
 
 function scannerFactoryFor(successThreshold, calls) {
   return (_imageData, options) => {
