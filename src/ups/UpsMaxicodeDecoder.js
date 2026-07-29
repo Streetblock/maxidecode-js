@@ -1,4 +1,5 @@
 import { FORMAT_07_DICTIONARY } from "./format07Dictionary.js";
+import { UPS_WEIGHT_PATTERN } from "./fieldValidation.js";
 
 /**
  * Decoder core for the compressed UPS MaxiCode "07" format.
@@ -257,7 +258,7 @@ export class UpsMaxicodeDecoder {
     const validators = {
       julianDayOfPickup: /^\d{3}$/,
       addressValidation: /^[YN]$/,
-      weightPounds: /^\d{1,10}$/,
+      weightPounds: UPS_WEIGHT_PATTERN,
       packageInShipment: /^\d{1,3}\/\d{1,3}$/,
     };
     const identifiers = {

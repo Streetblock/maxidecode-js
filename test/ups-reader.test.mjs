@@ -56,6 +56,47 @@ test("reads routing and compressed segments without losing payload controls", ()
   assert.equal(result.destination.addressLine1, "TEST STREET 1");
 });
 
+test("preserves a decimal Format 01 weight below one without guessing its unit", () => {
+  const decimalWeightMessage = `[)>${RS}${[
+    "01",
+    "9620459 ",
+    "276",
+    "752",
+    "1Z91596829",
+    "UPSN",
+    "608YV9",
+    "209",
+    "",
+    "1/1",
+    "0.5",
+    "N",
+    "",
+    "HAMBURG",
+    "",
+  ].join(GS)}${RS}${EOT}`;
+
+  const result = new UpsMaxicodeReader().read(decimalWeightMessage);
+
+  assert.equal(result.secondary.weightPounds, "0.5");
+  assert.equal(result.shipment.weightValue, "0.5");
+  assert.deepEqual(result.shipment.weight, {
+    raw: "0.5",
+    value: "0.5",
+    normalizedValue: null,
+    scale: null,
+    unit: null,
+    source: "format01",
+    status: "present",
+  });
+  assert.deepEqual(result.domain.packages[0].weight, {
+    value: 0.5,
+    unit: null,
+  });
+  assert.equal(result.domain.packages[0].sequence, 1);
+  assert.equal(result.domain.packages[0].total, 1);
+  assert.equal(result.destination.city, "HAMBURG");
+});
+
 test("reports a carrier-neutral MaxiCode message as unrecognized", () => {
   const result = new UpsMaxicodeReader().read("plain MaxiCode data");
 

@@ -1,5 +1,6 @@
 import { UpsMaxicodeDecoder } from "./UpsMaxicodeDecoder.js";
 import { createUpsDomainModelFromMaxicode } from "./UpsDomainModel.js";
+import { isUpsWeight } from "./fieldValidation.js";
 
 /**
  * Interprets the ANSI MH10.8.3 envelope returned by the MaxiCode decoder.
@@ -296,7 +297,7 @@ export class UpsMaxicodeReader {
     const addressLine4 = chooseAddress(format05?.shipToAddressLine4, compressedValue("shipToAddressLine4"));
     const addressLine5 = chooseAddress(format05?.shipToAddressLine5, compressedValue("shipToAddressLine5"));
 
-    const uncompressedWeight = /^\d{1,10}$/.test(String(secondary.weightPounds ?? ""))
+    const uncompressedWeight = isUpsWeight(secondary.weightPounds)
       ? secondary.weightPounds
       : null;
     const compressedWeightValue = compressedWeight?.valid ? compressedWeight.value : null;
