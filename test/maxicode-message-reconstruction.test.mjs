@@ -26,11 +26,11 @@ test("keeps the physical secondary message unchanged while reconstructing carrie
 test("reconstructs a carrier message without pretending the derived separators were scanned", () => {
   const secondaryText = `1Z45369427${GS}UPSN${GS}W1622R${GS}196`;
   const ansiText = reconstructCarrierAnsiMessage(secondaryText, {
-    postalCode: "54250",
-    countryCode: "276",
+    postalCode: "A1B2C3",
+    countryCode: "999",
     serviceClass: "068",
   });
 
-  assert.equal(ansiText, `54250${GS}276${GS}068${GS}${secondaryText}`);
-  assert.equal(secondaryText.startsWith(`54250${GS}`), false);
+  assert.equal(ansiText, `A1B2C3${GS}999${GS}068${GS}${secondaryText}`);
+  assert.equal(secondaryText.startsWith(`A1B2C3${GS}`), false);
 });
