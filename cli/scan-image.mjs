@@ -73,9 +73,10 @@ const pitch = scanner.estimateModulePitch(center);
 const cells = scanner.sampleHexGrid(center, pitch);
 const decode = scanner.decode(cells);
 let ups = null;
-if (decode.decoded && decode.text) {
+const carrierMessage = decode.ansiText ?? decode.text;
+if (decode.decoded && carrierMessage) {
   try {
-    ups = new UpsMaxicodeReader().read(decode.text);
+    ups = new UpsMaxicodeReader().read(carrierMessage);
   } catch (error) {
     ups = { recognized: false, error: error?.message || String(error) };
   }
