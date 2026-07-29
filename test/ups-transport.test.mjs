@@ -149,6 +149,30 @@ test("marks missing and truncated Format 07 slots without inventing values", () 
   assert.equal(partial.fields.records.shipToAddressLine1.value, null);
 });
 
+test("accepts a decimal weight in the Format 07 priority field", () => {
+  const decoder = new UpsMaxicodeDecoder();
+  const text = [
+    "HAMBURG",
+    "",
+    "KARPFANGERSTRASSE 16",
+    "",
+    "",
+    "",
+    "209",
+    "",
+    "N",
+    "0.5",
+    "1/1",
+    "",
+  ].join(UpsMaxicodeDecoder.GS);
+
+  const result = decoder.parseCompressionPriorityFields(text);
+
+  assert.equal(result.records.weightPounds.value, "0.5");
+  assert.equal(result.records.weightPounds.valid, true);
+  assert.equal(result.records.weightPounds.status, "present");
+});
+
 test("resolves the patent table's OA/HWY prefix overlap by longest match", () => {
   const dictionary = UpsMaxicodeDecoder.FORMAT_07_DICTIONARY;
   const oa = dictionary.find((entry) => entry.token === "OA");
