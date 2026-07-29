@@ -1,8 +1,9 @@
 import { MaxiCodeScanner } from "./scanner.js";
 
-// Preserve the common thresholds first. The darker fallback is needed for
-// photographed labels where gray paper and shadows otherwise merge into ink.
-export const AUTO_THRESHOLD_CANDIDATES = Object.freeze([128, 144, 152, 96]);
+// Preserve the common thresholds first. The high threshold recovers pale,
+// antialiased web-label previews; the darker fallback handles photographed
+// labels where gray paper and shadows otherwise merge into ink.
+export const AUTO_THRESHOLD_CANDIDATES = Object.freeze([128, 144, 152, 180, 96]);
 
 function attemptScore(attempt) {
   if (attempt.decode.decoded) return Number.POSITIVE_INFINITY;
