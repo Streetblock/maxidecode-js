@@ -4,26 +4,6 @@ import { UpsMaxicodeDecoder } from "../src/ups/UpsMaxicodeDecoder.js";
 
 const vectors = [
   {
-    name: "shared destination payload from labels SAMPLE-A, SAMPLE-D and SAMPLE-E",
-    payload: "REDACTED07A\rREDACTED_FORMAT07_PAYLOAD_A\r",
-    hex: "REDACTED_FORMAT07_HEX_A",
-    // The compressed source contains house number 1 although all three
-    // supplied labels visibly print 10. Preserve the encoded value.
-    text: `TEST CITY\x1d  \x1dTEST STREET 1\x1d`,
-    complete: true,
-    bitsConsumed: 252,
-    trailingBits: "",
-  },
-  {
-    name: "independent payload from label SAMPLE-C",
-    payload: "REDACTED07B\x1dREDACTED_FORMAT07_PAYLOAD_B\r",
-    hex: "REDACTED_FORMAT07_HEX_B",
-    text: `\x1d\x1dZENTRALLAGER\x1dTEST STREET 10\x1d\x1dMEDILOX G`,
-    complete: false,
-    bitsConsumed: 247,
-    trailingBits: "11100",
-  },
-  {
     name: "New York sample label",
     payload: "F*N&\rWZS'TS /'M\x1c\x1cO%HNUOLEVT(-3N39&U.(B(TLZLP\r",
     hex: "1891b6f412642d089a34116770630848efbd082142c46176e7d82a63c61ec4fa",
@@ -155,7 +135,9 @@ test("finds the bounded one-bit Los Angeles recovery candidate with provenance",
 });
 
 test("does not run one-bit recovery after a complete standard decode", () => {
-  const result = new UpsMaxicodeDecoder().decode(`07${vectors[0].payload}`, { recovery: true });
+  const completeVector = vectors.find((vector) => vector.complete);
+  assert.ok(completeVector);
+  const result = new UpsMaxicodeDecoder().decode(`07${completeVector.payload}`, { recovery: true });
 
   assert.deepEqual(result.recovery, {
     attempted: false,

@@ -67,7 +67,7 @@ export class UpsMaxicodeReader {
   }
 
   /**
-   * Recovers a producer-specific Mode 3 variant observed on label SAMPLE-B.
+   * Recovers a producer-specific, headerless Mode 3 variant.
    *
    * Its secondary data begins with `01<GS>96...` instead of the mandatory
    * `[)><RS>01<GS>96...` envelope. The MaxiCode primary fields are also
