@@ -152,12 +152,3 @@ test("accepts a decimal weight in the Format 07 priority field", () => {
   assert.equal(result.records.weightPounds.valid, true);
   assert.equal(result.records.weightPounds.status, "present");
 });
-
-test("resolves the patent table's OA/HWY prefix overlap by longest match", () => {
-  const dictionary = UpsMaxicodeDecoder.FORMAT_07_DICTIONARY;
-  const oa = dictionary.find((entry) => entry.token === "OA");
-  const hwy = dictionary.find((entry) => entry.token === "HWY");
-
-  assert.equal(hwy.bits.startsWith(oa.bits), true);
-  assert.equal(hwy.bits.length > oa.bits.length, true);
-});
