@@ -92,9 +92,23 @@ test("preserves a decimal Format 01 weight below one without guessing its unit",
     value: 0.5,
     unit: null,
   });
+  assert.equal(result.secondary.trackingNumberReconstructed, "1Z608YV9QH91596829");
+  assert.equal(result.domain.packages[0].trackingNumber, "1Z608YV9QH91596829");
   assert.equal(result.domain.packages[0].sequence, 1);
   assert.equal(result.domain.packages[0].total, 1);
   assert.equal(result.destination.city, "HAMBURG");
+});
+
+test("converts packed UPS class-of-service values into 1Z service indicators", () => {
+  const reader = new UpsMaxicodeReader();
+
+  assert.equal(reader.trackingServiceIndicatorFromClass("001"), "01");
+  assert.equal(reader.trackingServiceIndicatorFromClass("003"), "03");
+  assert.equal(reader.trackingServiceIndicatorFromClass("068"), "68");
+  assert.equal(reader.trackingServiceIndicatorFromClass("426"), "EA");
+  assert.equal(reader.trackingServiceIndicatorFromClass("752"), "QH");
+  assert.equal(reader.trackingServiceIndicatorFromClass("999"), "Z7");
+  assert.equal(reader.trackingServiceIndicatorFromClass("1000"), null);
 });
 
 test("reports a carrier-neutral MaxiCode message as unrecognized", () => {

@@ -13,6 +13,7 @@ export class UpsMaxicodeReader {
   static RS = "\x1e";
   static EOT = "\x04";
   static HEADER = "[)>";
+  static TRACKING_SERVICE_ALPHABET = "0123456789ACDEFGHJKLMNPQRSTVWXYZ";
 
   constructor({ format07Decoder = new UpsMaxicodeDecoder() } = {}) {
     this.format07Decoder = format07Decoder;
@@ -491,7 +492,28 @@ export class UpsMaxicodeReader {
     if (!/^[A-Z0-9]{6}$/i.test(account)) return null;
     if (!/^\d{3}$/.test(service)) return null;
 
-    return `1Z${account}${service.slice(-2)}${fragment.slice(2)}`.toUpperCase();
+    const serviceIndicator = this.trackingServiceIndicatorFromClass(service);
+    if (!serviceIndicator) return null;
+
+    return `1Z${account}${serviceIndicator}${fragment.slice(2)}`.toUpperCase();
+  }
+
+  /**
+   * UPS Guide to Labeling, Appendix A (2017), pp. 81-82:
+   * values below 100 keep their final two decimal digits. Higher values pack
+   * the two-character 1Z Service Level Indicator as quotient/remainder base 32
+   * using UPS's ambiguity-reduced alphabet (B, I, O and U are omitted).
+   */
+  trackingServiceIndicatorFromClass(serviceClass) {
+    const raw = String(serviceClass ?? "").trim();
+    if (!/^\d{3}$/.test(raw)) return null;
+
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 0 || value > 999) return null;
+    if (value < 100) return raw.slice(-2);
+
+    const alphabet = UpsMaxicodeReader.TRACKING_SERVICE_ALPHABET;
+    return `${alphabet[Math.floor(value / 32)]}${alphabet[value % 32]}`;
   }
 
   /**
