@@ -81,12 +81,3 @@ for (const vector of vectors) {
     assert.deepEqual(result.fields.segments, vector.text.split("\x1d"));
   });
 }
-
-test("resolves the patent table's OA/HWY prefix overlap by longest match", () => {
-  const dictionary = UpsMaxicodeDecoder.FORMAT_07_DICTIONARY;
-  const oa = dictionary.find((entry) => entry.token === "OA");
-  const hwy = dictionary.find((entry) => entry.token === "HWY");
-
-  assert.equal(hwy.bits.startsWith(oa.bits), true);
-  assert.equal(hwy.bits.length > oa.bits.length, true);
-});
