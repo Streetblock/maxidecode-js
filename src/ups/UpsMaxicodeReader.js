@@ -24,11 +24,13 @@ export class UpsMaxicodeReader {
       throw new TypeError("MaxiCode message must be a string.");
     }
 
-    const segments = message
+    const prefixedPrimary = this.parsePrefixedMode3Primary(message);
+    const parsedMessage = prefixedPrimary?.ansiMessage ?? message;
+    const segments = parsedMessage
       .split(UpsMaxicodeReader.RS)
       .map((segment) => segment.replaceAll(UpsMaxicodeReader.EOT, ""));
     const hasStructuredHeader = segments[0] === UpsMaxicodeReader.HEADER;
-    const hasMessageTrailer = message.endsWith(
+    const hasMessageTrailer = parsedMessage.endsWith(
       `${UpsMaxicodeReader.RS}${UpsMaxicodeReader.EOT}`,
     );
     const hasStandardEnvelope = hasStructuredHeader && hasMessageTrailer;
@@ -77,12 +79,43 @@ export class UpsMaxicodeReader {
       warnings: validation.warnings,
       format: "01",
       format01Header: routing.format01Header,
+      primaryPrefix: prefixedPrimary?.source ?? null,
       primary: routing.primary,
       secondary: routing.secondary,
       compressed,
       format05,
       ...structured,
       domain,
+    };
+  }
+
+  /**
+   * Normalizes scanner output that prefixes a Mode 3 primary message to the
+   * intact ANSI secondary message as `3N service + 3N country + 6AN postal`.
+   * This is a scanner serialization convention, not part of the ANSI message.
+   */
+  parsePrefixedMode3Primary(message) {
+    const marker = `${UpsMaxicodeReader.HEADER}${UpsMaxicodeReader.RS}01${UpsMaxicodeReader.GS}96`;
+    const match = /^(\d{3})(\d{3})([A-Z0-9 ]{6})([\s\S]*)$/i.exec(message);
+    if (!match || !match[4].startsWith(marker)) return null;
+
+    const [, serviceClass, countryCode, paddedPostalCode, secondaryMessage] = match;
+    const postalCode = paddedPostalCode.trimEnd();
+    if (!postalCode) return null;
+
+    return {
+      ansiMessage: secondaryMessage.replace(
+        marker,
+        `${marker}${postalCode}${UpsMaxicodeReader.GS}${countryCode}${UpsMaxicodeReader.GS}${serviceClass}${UpsMaxicodeReader.GS}`,
+      ),
+      source: {
+        layout: "3N-service+3N-country+6AN-postal",
+        raw: message.slice(0, 12),
+        serviceClass,
+        countryCode,
+        postalCode,
+        paddedPostalCode,
+      },
     };
   }
 

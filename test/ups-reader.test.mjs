@@ -6,6 +6,39 @@ const GS = "\x1d";
 const RS = "\x1e";
 const EOT = "\x04";
 
+test("reads scanner output with a prefixed Mode 3 primary message", () => {
+  const message = `4030405000  [)>${RS}01${GS}961Z08720000${GS}UPSN${GS}680RA4${GS}051${GS}${GS}1/1${GS}1${GS}N${GS}${GS}HALLEIN${GS}${RS}${EOT}`;
+  const result = new UpsMaxicodeReader().read(message);
+
+  assert.equal(result.recognized, true);
+  assert.equal(result.standardEnvelope, true);
+  assert.equal(result.status, "valid");
+  assert.deepEqual(result.primary, {
+    postalCode: "5000",
+    countryCode: "040",
+    serviceClass: "403",
+  });
+  assert.deepEqual(result.primaryPrefix, {
+    layout: "3N-service+3N-country+6AN-postal",
+    raw: "4030405000  ",
+    serviceClass: "403",
+    countryCode: "040",
+    postalCode: "5000",
+    paddedPostalCode: "5000  ",
+  });
+  assert.equal(result.secondary.trackingNumberEncoded, "1Z08720000");
+  assert.equal(result.secondary.scac, "UPSN");
+  assert.equal(result.secondary.shipperId, "680RA4");
+  assert.equal(result.secondary.trackingNumberReconstructed, "1Z680RA4DL08720000");
+  assert.equal(result.secondary.julianDayOfPickup, "051");
+  assert.equal(result.secondary.shipmentId, null);
+  assert.equal(result.secondary.packageInShipment, "1/1");
+  assert.equal(result.secondary.weightPounds, "1");
+  assert.equal(result.secondary.addressValidation, "N");
+  assert.equal(result.destination.city, "HALLEIN");
+  assert.equal(result.destination.state, null);
+});
+
 test("preserves a decimal Format 01 weight below one without guessing its unit", () => {
   const decimalWeightMessage = `[)>${RS}${[
     "01",
