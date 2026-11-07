@@ -40,6 +40,7 @@ const vectors = [
     complete: false,
     bitsConsumed: 244,
     trailingBits: "00000010",
+    combinedWeight: "4",
   },
   {
     name: "Avery Monarch compressed MaxiCode sample",
@@ -79,16 +80,10 @@ for (const vector of vectors) {
     assert.equal(result.version, "07");
     assert.equal(result.payloadSymbolCount, 45);
     assert.equal(result.transportHex, vector.hex);
-    assert.deepEqual(result.header, {
-      bits: "0001",
-      value: 1,
-      truncationFlag: null,
-      interpretation: "unknown: US7039496B2 does not disclose the flag's bit layout",
-    });
-    assert.deepEqual(result.sourceTruncation, {
-      status: "unknown",
-      reason: "The four framing bits are isolated, but their truncation-flag layout is not disclosed by US7039496B2.",
-    });
+    assert.equal(result.header.bits, "0001");
+    assert.equal(result.header.value, 1);
+    assert.equal(result.header.truncationFlag, null);
+    assert.equal(result.sourceTruncation.status, vector.combinedWeight ? "possible" : "unknown");
     assert.equal(
       result.decoder.substitutionStatus,
       vector.complete ? "expanded" : "unresolved-tail",
@@ -100,8 +95,15 @@ for (const vector of vectors) {
     assert.equal(result.decoder.trailingBits, vector.trailingBits);
     assert.deepEqual(result.fields.segments, vector.text.split("\x1d"));
     assert.equal(result.fields.records.weightPounds.priority, 8);
-    assert.equal(result.fields.records.weightPounds.compressionIndex, 9);
+    assert.equal(result.fields.records.weightPounds.compressionIndex, vector.combinedWeight ? 8 : 9);
     assert.equal(result.fields.records.weightPounds.source, "format07");
+    if (vector.combinedWeight) {
+      assert.equal(result.fields.records.addressValidation.value, "N");
+      assert.equal(result.fields.records.weightPounds.value, vector.combinedWeight);
+      assert.equal(result.fields.records.weightPounds.terminatedByGs, true);
+      assert.equal(result.fields.records.packageInShipment.status, "partial");
+      assert.equal(result.fieldTermination.status, "missing-final-gs");
+    }
     const tracedRecords = Object.values(result.fields.records).filter((record) => record.bitRange);
     for (const record of tracedRecords) {
       assert.equal(record.bitRange.transportStart, record.bitRange.payloadStart + 4);
@@ -160,7 +162,7 @@ const gs = UpsMaxicodeDecoder.GS;
 const gsTerminatedText = gsTerminatedGroups.join(gs) + gs;
 
 test("the GS-terminated schema preserves literal # and removes only the padding after the eleventh GS", () => {
-  const decoder = new UpsMaxicodeDecoder({ framing: "gs-terminated" });
+  const decoder = new UpsMaxicodeDecoder();
   const result = decoder.decode("07" + gsTerminatedPayload);
 
   assert.equal(result.transportHex, gsTerminatedHex);
@@ -194,6 +196,17 @@ test("the GS-terminated schema preserves literal # and removes only the padding 
       transportEnd: end + 4,
     }, field);
   }
+});
+
+test("keeps a separately delimited weight when the frame also fits the eleven-GS bit bounds", () => {
+  const payload = "Q\r\"W$BYMME,#\x1dV\"NYGFBS5XP$'IJK8FO8**RA0F+Q  J\r";
+  const result = new UpsMaxicodeDecoder().decode("07" + payload);
+
+  assert.equal(result.header.bits, "0000");
+  assert.equal(result.fields.records.addressValidation.value, "Y");
+  assert.equal(result.fields.records.weightPounds.value, "1");
+  assert.equal(result.fields.records.packageInShipment.value, "1/1");
+  assert.equal(result.fieldTermination, undefined);
 });
 
 // Extending the shipment ID moves the final GS to the header thresholds.

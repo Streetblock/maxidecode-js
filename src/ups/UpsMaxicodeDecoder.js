@@ -4,6 +4,7 @@ import { UPS_WEIGHT_PATTERN } from "./fieldValidation.js";
 const GS_TERMINATED_FRAMING = "gs-terminated";
 const GS_TERMINATED_GROUPS = 11;
 const SHORT_FRAME_MAX_BITS = 248;
+const PACKAGE_COUNT_PATTERN = /^\d{1,3}\/\d{1,3}$/;
 
 function bytesToBits(bytes) {
   return [...bytes].map((byte) => byte.toString(2).padStart(8, "0")).join("");
@@ -148,9 +149,9 @@ export class UpsMaxicodeDecoder {
 
   /**
    * Decode a scanned format-07 substring to a structured JSON-compatible value.
-   * Select framing: "gs-terminated" for the schema with eleven GS-terminated
-   * groups. The header alone does not identify the schema.
-   * In that mode, fieldTermination reports the record boundary separately
+   * Recognize the eleven-group schema from its completed field values.
+   * Callers that already know the schema can select framing: "gs-terminated".
+   * For that schema, fieldTermination reports the record boundary separately
    * from the transport length and the substitution decoder's status.
    */
   decode(compressedString, { framing = this.framing } = {}) {
@@ -163,7 +164,8 @@ export class UpsMaxicodeDecoder {
     }
 
     const raw = this.decodeHuffmanBytes(bytes);
-    const gsTerminated = framing === GS_TERMINATED_FRAMING;
+    const gsTerminated = framing === GS_TERMINATED_FRAMING ||
+      (framing == null && this.#hasGsTerminatedFields(raw.text));
     const frameBits = gsTerminated ? bytesToBits(bytes) : null;
     const headerBits = frameBits ? frameBits.slice(0, 4) : raw.headerBits;
     const fieldTermination = gsTerminated
@@ -206,7 +208,7 @@ export class UpsMaxicodeDecoder {
       fields: this.parseCompressionPriorityFields(decoded.text, {
         decoderComplete: decoded.complete,
         tokenTrace: decoded.tokenTrace,
-        framing,
+        framing: gsTerminated ? GS_TERMINATED_FRAMING : null,
       }),
       decoder: {
         bitsConsumed: decoded.bitsConsumed,
@@ -221,6 +223,21 @@ export class UpsMaxicodeDecoder {
         ],
       },
     };
+  }
+
+  #hasGsTerminatedFields(text) {
+    const groups = text.split(UpsMaxicodeDecoder.GS, 11);
+    if (groups.length < 10) return false;
+
+    const validationAndWeight = groups[8];
+    const hasValidationFlag = /^[YN]/.test(validationAndWeight);
+    if (hasValidationFlag && UPS_WEIGHT_PATTERN.test(validationAndWeight.slice(1))) return true;
+
+    // A package count in group ten distinguishes the schema when weight is
+    // empty. The other layout would put a weight in that group.
+    const weightIsEmpty = validationAndWeight === "" ||
+      (hasValidationFlag && validationAndWeight.length === 1);
+    return weightIsEmpty && groups.length === 11 && PACKAGE_COUNT_PATTERN.test(groups[9]);
   }
 
   #checkFieldTermination(headerBits, payloadBits, tokenTrace) {
@@ -345,7 +362,7 @@ export class UpsMaxicodeDecoder {
       julianDayOfPickup: /^\d{3}$/,
       addressValidation: /^[YN]$/,
       weightPounds: UPS_WEIGHT_PATTERN,
-      packageInShipment: /^\d{1,3}\/\d{1,3}$/,
+      packageInShipment: PACKAGE_COUNT_PATTERN,
     };
     const identifiers = {
       "20L": "shipToAddressLine2",
