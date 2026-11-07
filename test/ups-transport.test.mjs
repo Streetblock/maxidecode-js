@@ -152,3 +152,159 @@ test("accepts a decimal weight in the Format 07 priority field", () => {
   assert.equal(result.records.weightPounds.valid, true);
   assert.equal(result.records.weightPounds.status, "present");
 });
+
+const gsTerminatedPayload = "TKV8NJDE02BNK2X26HF1'GT:7XHJK8FO8**RA0F+Q  J\r";
+const gsTerminatedHex = "0ff43fe00db6891a246022edad01176022e99c08bb5ff4fe200c000000000000";
+const gsTerminatedGroups = ["A", "CA", "#", "", "", "", "001", "", "Y1", "1/1", "SHIP#"];
+const gs = UpsMaxicodeDecoder.GS;
+const gsTerminatedText = gsTerminatedGroups.join(gs) + gs;
+
+test("the GS-terminated schema preserves literal # and removes only the padding after the eleventh GS", () => {
+  const decoder = new UpsMaxicodeDecoder({ framing: "gs-terminated" });
+  const result = decoder.decode("07" + gsTerminatedPayload);
+
+  assert.equal(result.transportHex, gsTerminatedHex);
+  assert.equal(result.payloadSymbolCount, 45);
+  assert.equal(result.header.bits, "0000");
+  assert.equal(result.fieldTermination.status, "complete");
+  assert.equal(result.fieldTermination.gsCount, 11);
+  assert.equal(result.fieldTermination.endBit, 203);
+  assert.equal(result.fieldTermination.paddingBits, 49);
+  assert.equal(result.sourceTruncation.status, "not-truncated");
+  assert.equal(result.decodedText, gsTerminatedText);
+  assert.equal(result.decoder.bitsConsumed, 203);
+  assert.equal(result.decoder.trailingBits, "");
+  assert.equal(result.decoder.complete, true);
+  assert.deepEqual(result.fields.segments, gsTerminatedGroups);
+
+  const { records } = result.fields;
+  for (const [field, value, start, end] of [
+    ["shipToAddressLine1", "#", 24, 32],
+    ["addressValidation", "Y", 94, 101],
+    ["weightPounds", "1", 101, 117],
+    ["packageInShipment", "1/1", 120, 162],
+    ["shipmentId", "SHIP#", 165, 200],
+  ]) {
+    assert.equal(records[field].value, value, field);
+    assert.equal(records[field].terminatedByGs, true, field);
+    assert.deepEqual(records[field].bitRange, {
+      payloadStart: start,
+      payloadEnd: end,
+      transportStart: start + 4,
+      transportEnd: end + 4,
+    }, field);
+  }
+});
+
+// Extending the shipment ID moves the final GS to the header thresholds.
+for (const { bits, header, payload, shipmentId } of [
+  {
+    bits: 248,
+    header: "0000",
+    payload: "$JEZ\x1c\"O$78BNK2X26HF1'GT:7XHJK8FO8**RA0F+Q  J\r",
+    shipmentId: "SHIPZQQQA#",
+  },
+  {
+    bits: 249,
+    header: "0001",
+    payload: "5/$G HZD9'\x1c43U\"1TTRA43G2W6KT6+Y5E)E\r)VZES,EU\r",
+    shipmentId: "SHIPQQQQA#",
+  },
+  {
+    bits: 252,
+    header: "0001",
+    payload: "LH0\x1d&S8ZS\"\x1c43U\"1TTRA43G2W6KT6+Y5E)E\r)VZES,EU\r",
+    shipmentId: "SHIPZQQQQ#",
+  },
+]) {
+  test("accepts a complete GS-terminated record at bit " + bits, () => {
+    const result = new UpsMaxicodeDecoder().decode("07" + payload, { framing: "gs-terminated" });
+
+    assert.equal(result.header.bits, header);
+    assert.equal(result.fieldTermination.status, "complete");
+    assert.equal(result.fieldTermination.endBit, bits);
+    assert.equal(result.fieldTermination.paddingBits, 252 - bits);
+    assert.equal(result.sourceTruncation.status, "not-truncated");
+    assert.equal(result.decoder.complete, true);
+    assert.equal(result.fields.records.shipmentId.value, shipmentId);
+  });
+}
+
+test("rejects a final GS after bit 248 when the header is 0000", () => {
+  const payload = "W5E4US0I\"CCNK2X26HF1'GT:7XHJK8FO8**RA0F+Q  J\r";
+  const result = new UpsMaxicodeDecoder({ framing: "gs-terminated" }).decode("07" + payload);
+
+  assert.equal(result.header.bits, "0000");
+  assert.equal(result.fieldTermination.status, "header-mismatch");
+  assert.equal(result.fieldTermination.endBit, 249);
+  assert.equal(result.fieldTermination.paddingBits, null);
+  assert.equal(result.decoder.trailingBits, "000");
+});
+
+// The final GS is cut inside its codeword in one vector and entirely in the other.
+for (const { payload, shipmentId, bitsConsumed, trailingBits } of [
+  {
+    payload: "Z1*A HZD9'\x1c43U\"1TTRA43G2W6KT6+Y5E)E\r)VZES,EU\r",
+    shipmentId: "SHIPQQQQQ#",
+    bitsConsumed: 250,
+    trailingBits: "11",
+  },
+  {
+    payload: "NF*G HZD9'\x1c43U\"1TTRA43G2W6KT6+Y5E)E\r)VZES,EU\r",
+    shipmentId: "SHIPQQQQAA#",
+    bitsConsumed: 252,
+    trailingBits: "",
+  },
+]) {
+  test("reports the missing final GS after " + bitsConsumed + " decoded bits", () => {
+    const result = new UpsMaxicodeDecoder({ framing: "gs-terminated" }).decode("07" + payload);
+
+    assert.equal(result.payloadSymbolCount, 45);
+    assert.equal(result.header.bits, "0001");
+    assert.equal(result.fieldTermination.status, "missing-final-gs");
+    assert.equal(result.fieldTermination.gsCount, 10);
+    assert.equal(result.fieldTermination.paddingBits, null);
+    assert.ok(result.fieldTermination.reason);
+    assert.equal(result.sourceTruncation.status, "possible");
+    assert.equal(result.decodedText, gsTerminatedGroups.slice(0, -1).join(gs) + gs + shipmentId);
+    assert.equal(result.decoder.bitsConsumed, bitsConsumed);
+    assert.equal(result.decoder.trailingBits, trailingBits);
+    assert.equal(result.decoder.complete, trailingBits === "");
+    assert.equal(result.fields.records.shipmentId.status, "partial");
+    assert.equal(result.fields.records.shipmentId.value, null);
+  });
+}
+
+for (const { status, payload, hex, trailingBits } of [
+  {
+    status: "nonzero-suffix",
+    payload: "UKV8NJDE02BNK2X26HF1'GT:7XHJK8FO8**RA0F+Q  J\r",
+    hex: gsTerminatedHex.slice(0, -1) + "1",
+    trailingBits: "1",
+  },
+  {
+    status: "header-mismatch",
+    payload: "2E5KV:,:KX\x1c43U\"1TTRA43G2W6KT6+Y5E)E\r)VZES,EU\r",
+    hex: "1" + gsTerminatedHex.slice(1),
+    trailingBits: "0",
+  },
+  {
+    status: "unknown-header",
+    payload: "Q\rUZ /V5&A8\x1c 8'01#\"LE%6)6TO\"&\x1c0\x1dN'\x1c(QA2ZT7(#\r",
+    hex: "2" + gsTerminatedHex.slice(1),
+    trailingBits: "0",
+  },
+]) {
+  test("keeps raw substitutions for GS termination status " + status, () => {
+    const result = new UpsMaxicodeDecoder({ framing: "gs-terminated" }).decode("07" + payload);
+
+    assert.equal(result.transportHex, hex);
+    assert.equal(result.fieldTermination.status, status);
+    assert.equal(result.fieldTermination.paddingBits, null);
+    assert.ok(result.fieldTermination.reason);
+    assert.equal(result.decodedText, gsTerminatedText + "######");
+    assert.equal(result.decoder.bitsConsumed, 251);
+    assert.equal(result.decoder.trailingBits, trailingBits);
+    assert.equal(result.decoder.complete, false);
+  });
+}

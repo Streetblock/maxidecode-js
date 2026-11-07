@@ -1,6 +1,14 @@
 import { FORMAT_07_DICTIONARY } from "./format07Dictionary.js";
 import { UPS_WEIGHT_PATTERN } from "./fieldValidation.js";
 
+const GS_TERMINATED_FRAMING = "gs-terminated";
+const GS_TERMINATED_GROUPS = 11;
+const SHORT_FRAME_MAX_BITS = 248;
+
+function bytesToBits(bytes) {
+  return [...bytes].map((byte) => byte.toString(2).padStart(8, "0")).join("");
+}
+
 /**
  * Decoder core for the compressed UPS MaxiCode "07" format.
  *
@@ -23,9 +31,10 @@ export class UpsMaxicodeDecoder {
   /** Complete active substitution table from patent figs. 4A-4H. */
   static FORMAT_07_DICTIONARY = FORMAT_07_DICTIONARY;
 
-  constructor({ transportDecoder = null, substitutionDecoder = null, dictionary = [] } = {}) {
+  constructor({ transportDecoder = null, substitutionDecoder = null, dictionary = [], framing = null } = {}) {
     this.transportDecoder = transportDecoder ?? UpsMaxicodeDecoder.decodeTransport;
     this.substitutionDecoder = substitutionDecoder ?? UpsMaxicodeDecoder.decodeSubstitutions;
+    this.framing = framing;
     this.dictionary = Object.freeze([
       ...UpsMaxicodeDecoder.FORMAT_07_DICTIONARY,
       ...dictionary
@@ -93,9 +102,7 @@ export class UpsMaxicodeDecoder {
       throw new RangeError(`Substitution input must contain 32 bytes; received ${bytes.length}.`);
     }
 
-    const framedBits = [...bytes]
-      .map((byte) => byte.toString(2).padStart(8, "0"))
-      .join("");
+    const framedBits = bytesToBits(bytes);
     const headerBits = framedBits.slice(0, 4);
     const payloadBits = framedBits.slice(4);
     const entries = [...dictionary];
@@ -141,10 +148,12 @@ export class UpsMaxicodeDecoder {
 
   /**
    * Decode a scanned format-07 substring to a structured JSON-compatible value.
-   * The returned interoperability notes distinguish patent-defined operations
-   * from framing details established with the supplied label vectors.
+   * Select framing: "gs-terminated" for the schema with eleven GS-terminated
+   * groups. The header alone does not identify the schema.
+   * In that mode, fieldTermination reports the record boundary separately
+   * from the transport length and the substitution decoder's status.
    */
-  decode(compressedString) {
+  decode(compressedString, { framing = this.framing } = {}) {
     const envelope = this.#parseEnvelope(compressedString);
 
     const bytes = this.transportDecoder(envelope.payload);
@@ -153,7 +162,27 @@ export class UpsMaxicodeDecoder {
       throw new RangeError(`transportDecoder must return 32 bytes; received ${bytes.length}`);
     }
 
-    const decoded = this.decodeHuffmanBytes(bytes);
+    const raw = this.decodeHuffmanBytes(bytes);
+    const gsTerminated = framing === GS_TERMINATED_FRAMING;
+    const frameBits = gsTerminated ? bytesToBits(bytes) : null;
+    const headerBits = frameBits ? frameBits.slice(0, 4) : raw.headerBits;
+    const fieldTermination = gsTerminated
+      ? this.#checkFieldTermination(headerBits, frameBits.slice(4), raw.tokenTrace)
+      : null;
+    let decoded = raw;
+    if (fieldTermination?.status === "complete") {
+      const tokenTrace = raw.tokenTrace.filter((trace) => trace.payloadBitEnd <= fieldTermination.endBit);
+      decoded = {
+        ...raw,
+        text: tokenTrace.map((trace) => trace.token).join(""),
+        tokenTrace,
+        bitsConsumed: fieldTermination.endBit,
+        trailingBits: "",
+        complete: true,
+        reason: null,
+      };
+    }
+
     return {
       ok: decoded.text.length > 0,
       version: envelope.version,
@@ -162,19 +191,22 @@ export class UpsMaxicodeDecoder {
       transportBytes: [...bytes],
       transportHex: [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join(""),
       header: {
-        bits: decoded.headerBits,
-        value: decoded.headerValue,
+        bits: headerBits,
+        value: gsTerminated ? Number.parseInt(headerBits, 2) : raw.headerValue,
         truncationFlag: null,
-        interpretation: "unknown: US7039496B2 does not disclose the flag's bit layout",
+        interpretation: gsTerminated && ["0000", "0001"].includes(headerBits)
+          ? "0000 indicates at most 248 source dictionary bits; 0001 indicates at least 249."
+          : gsTerminated
+            ? "unknown header for the GS-terminated schema"
+            : "unknown: US7039496B2 does not disclose the flag's bit layout",
       },
-      sourceTruncation: {
-        status: "unknown",
-        reason: "The four framing bits are isolated, but their truncation-flag layout is not disclosed by US7039496B2.",
-      },
+      sourceTruncation: this.#sourceTruncation(headerBits, fieldTermination),
+      ...(fieldTermination && { fieldTermination }),
       decodedText: decoded.text,
       fields: this.parseCompressionPriorityFields(decoded.text, {
         decoderComplete: decoded.complete,
         tokenTrace: decoded.tokenTrace,
+        framing,
       }),
       decoder: {
         bitsConsumed: decoded.bitsConsumed,
@@ -188,6 +220,63 @@ export class UpsMaxicodeDecoder {
           "first four bits are framing and the remaining 252 bits are substitutions",
         ],
       },
+    };
+  }
+
+  #checkFieldTermination(headerBits, payloadBits, tokenTrace) {
+    const separators = Array.isArray(tokenTrace)
+      ? tokenTrace.filter((trace) => trace.token === UpsMaxicodeDecoder.GS)
+      : null;
+    const endBit = separators?.[GS_TERMINATED_GROUPS - 1]?.payloadBitEnd ?? null;
+    const diagnostics = { gsCount: separators?.length ?? null, endBit, paddingBits: null };
+    const failure = (status, reason) => ({ ...diagnostics, status, reason });
+
+    if (headerBits !== "0000" && headerBits !== "0001") {
+      return failure("unknown-header", `Unsupported header ${headerBits} for the GS-terminated schema.`);
+    }
+    if (!separators) {
+      return failure("unavailable", "Substitution bit offsets are needed to verify the field boundary.");
+    }
+    if (separators.length < GS_TERMINATED_GROUPS) {
+      return failure("missing-final-gs", `Decoded ${separators.length} of ${GS_TERMINATED_GROUPS} GS terminators.`);
+    }
+    if (!Number.isInteger(endBit) || endBit <= 0) {
+      return failure("unavailable", "The eleventh GS has no usable bit offset.");
+    }
+
+    // Eight zero bits also encode "#". Only bits beyond the final GS can be padding.
+    const suffix = payloadBits.slice(endBit);
+    if (suffix.includes("1")) {
+      return failure("nonzero-suffix", "Nonzero bits follow the eleventh GS.");
+    }
+    if (endBit > payloadBits.length || (endBit <= SHORT_FRAME_MAX_BITS) !== (headerBits === "0000")) {
+      return failure("header-mismatch", `The eleventh GS ends at payload bit ${endBit}, inconsistent with header ${headerBits}.`);
+    }
+    return { ...diagnostics, status: "complete", paddingBits: suffix.length, reason: null };
+  }
+
+  #sourceTruncation(headerBits, fieldTermination) {
+    if (!fieldTermination) {
+      return {
+        status: "unknown",
+        reason: "The four framing bits are isolated, but their truncation-flag layout is not disclosed by US7039496B2.",
+      };
+    }
+    if (fieldTermination.status === "complete") {
+      return {
+        status: "not-truncated",
+        reason: "All eleven fields end within the transport frame. Earlier shortening of field values cannot be determined.",
+      };
+    }
+    if (headerBits === "0001") {
+      return {
+        status: "possible",
+        reason: "The header permits source data beyond the 252 payload bits, and the field boundary could not be verified.",
+      };
+    }
+    return {
+      status: "unknown",
+      reason: "The field boundary could not be verified for this header.",
     };
   }
 
@@ -232,11 +321,12 @@ export class UpsMaxicodeDecoder {
    * that reordered stream; a full decompressor would put the fields back into
    * Fig. 2 order when rebuilding the original interface string.
    */
-  parseCompressionPriorityFields(text, { decoderComplete = true, tokenTrace = null } = {}) {
+  parseCompressionPriorityFields(text, { decoderComplete = true, tokenTrace = null, framing = this.framing } = {}) {
     // Fig. 2 defines city and state as interface fields, but Table 1 assigns
     // them no numeric compression priority. Independent UPS-compressed label
     // vectors show that they prefix the Table 1 stream. Table 1 then supplies
     // priorities 1-10 for the remaining fields.
+    const gsTerminated = framing === GS_TERMINATED_FRAMING;
     const compressionOrder = [
       { field: "shipToCity", priority: null },
       { field: "shipToState", priority: null },
@@ -246,10 +336,10 @@ export class UpsMaxicodeDecoder {
       { field: "shipToAddressLine4", priority: 4 },
       { field: "julianDayOfPickup", priority: 5 },
       { field: "shipToAddressLine5", priority: 6 },
-      { field: "addressValidation", priority: 7 },
-      { field: "weightPounds", priority: 8 },
-      { field: "packageInShipment", priority: 9 },
-      { field: "shipmentId", priority: 10 },
+      { field: "addressValidation", priority: 7, end: gsTerminated ? 1 : undefined },
+      { field: "weightPounds", priority: 8, group: gsTerminated ? 8 : 9, start: gsTerminated ? 1 : 0 },
+      { field: "packageInShipment", priority: 9, group: gsTerminated ? 9 : 10 },
+      { field: "shipmentId", priority: 10, group: gsTerminated ? 10 : 11 },
     ];
     const validators = {
       julianDayOfPickup: /^\d{3}$/,
@@ -264,6 +354,8 @@ export class UpsMaxicodeDecoder {
       "23L": "shipToAddressLine5",
     };
     const segments = text.split(UpsMaxicodeDecoder.GS);
+    const terminatedGroups = segments.length - 1;
+    if (gsTerminated && text.endsWith(UpsMaxicodeDecoder.GS)) segments.pop();
     const segmentTraces = Array.from({ length: segments.length }, () => []);
     if (Array.isArray(tokenTrace)) {
       let segmentIndex = 0;
@@ -276,19 +368,22 @@ export class UpsMaxicodeDecoder {
       }
     }
     const unknown = [];
-    const values = Object.fromEntries(compressionOrder.map(({ field }, index) => {
-      const raw = segments[index] ?? "";
-      return [field, raw.trim().length ? raw : null];
-    }));
     const identified = {};
-    const records = Object.fromEntries(compressionOrder.map(({ field, priority }, index) => {
-      const available = index < segments.length;
-      const raw = available ? segments[index] : null;
-      const finalUndelimitedSegment = available && index === segments.length - 1 && !text.endsWith(UpsMaxicodeDecoder.GS);
-      const partial = finalUndelimitedSegment && !decoderComplete;
+    const records = Object.fromEntries(compressionOrder.map(({ field, priority, group: groupIndex, start = 0, end }, index) => {
+      const group = groupIndex ?? index;
+      const available = group < segments.length;
+      const raw = available ? segments[group].slice(start, end) : null;
+      const terminatedByGs = available && group < terminatedGroups;
+      const finalUndelimitedSegment = available && !terminatedByGs && !text.endsWith(UpsMaxicodeDecoder.GS);
+      const partial = finalUndelimitedSegment && (gsTerminated || !decoderComplete);
       const populated = typeof raw === "string" && raw.trim().length > 0;
       const valid = populated && validators[field] ? validators[field].test(raw) : populated;
-      const traces = segmentTraces[index] ?? [];
+      let offset = 0;
+      const traces = (segmentTraces[group] ?? []).filter((trace) => {
+        const tokenStart = offset;
+        offset += trace.token.length;
+        return offset > start && (end === undefined || tokenStart < end);
+      });
       const bitRange = traces.length ? {
         payloadStart: traces[0].payloadBitStart,
         payloadEnd: traces.at(-1).payloadBitEnd,
@@ -304,27 +399,31 @@ export class UpsMaxicodeDecoder {
       return [field, {
         field,
         priority,
-        compressionIndex: index,
+        compressionIndex: group,
         raw,
         value: valid && !partial ? raw : null,
         status,
         valid: valid && !partial,
         source: "format07",
-        terminatedByGs: available && index < segments.length - 1,
+        terminatedByGs,
         bitRange,
       }];
     }));
+    const values = Object.fromEntries(Object.values(records).map(({ field, raw }) => [
+      field, raw?.trim().length ? raw : null,
+    ]));
 
-    for (const raw of segments.filter((segment) => segment.trim().length > 0)) {
+    for (const [index, raw] of segments.entries()) {
       const match = /^(20L|21L|22L|23L)(.*)$/s.exec(raw);
       if (match) {
         const field = identifiers[match[1]];
+        if (gsTerminated && compressionOrder[index]?.field !== field) continue;
         values[field] = match[2] || null;
         identified[field] = match[1];
       }
     }
-    for (const raw of segments.slice(compressionOrder.length)) {
-      if (raw.trim().length > 0 && !/^(20L|21L|22L|23L)/s.test(raw)) unknown.push(raw);
+    for (const raw of segments.slice(gsTerminated ? GS_TERMINATED_GROUPS : compressionOrder.length)) {
+      if (raw.trim().length > 0 && (gsTerminated || !/^(20L|21L|22L|23L)/s.test(raw))) unknown.push(raw);
     }
     return {
       ...values,
